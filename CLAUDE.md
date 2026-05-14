@@ -64,8 +64,8 @@ These apply everywhere. Violating any of them blocks a PR.
 ## Environment Files
 
 - **`.env.local`** is the only env file used in development. Copy `.env.local.example` to get started.
-- **`.env` is never used.** Do not create, reference, or load it. Production env vars are injected by the deployment platform — dotenv does not run there.
-- `dotenv` loads `.env.local` exclusively, at the top of `src/main.ts` before any config module is imported.
+- **`.env` is never used.** Do not create, reference, or load it. Production env vars are injected by the deployment platform.
+- **No `dotenv` package.** Node 24 loads `.env.local` natively via `--env-file-if-exists=.env.local` (already in the `dev` script). All `db:*` scripts use the same flag to pass env to the Prisma CLI. Never add a `dotenv` import to application code.
 
 ## What to Reject on Sight
 
@@ -95,6 +95,7 @@ These apply everywhere. Violating any of them blocks a PR.
 5. **Match existing patterns** in this codebase over external conventions.
 6. **Don't invent library behavior.** If unsure how Kysely / Fastify / BullMQ behaves, say so and check the docs.
 7. **If a request conflicts with this file, say so.** Don't comply silently.
+8. **After any bootstrap or scaffold task**, verify every package in the Stack table above is present in `package.json` before committing. A commit message claiming a package is included is not proof it was installed.
 
 ## Forward Watch
 
