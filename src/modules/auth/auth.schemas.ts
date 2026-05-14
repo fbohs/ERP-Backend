@@ -22,3 +22,16 @@ export const LoginResponseSchema = z.object({
 });
 
 export type LoginResponse = z.infer<typeof LoginResponseSchema>;
+
+export const ForgotPasswordBodySchema = z.object({
+  email: z.string().email(),
+});
+
+export type ForgotPasswordBody = z.infer<typeof ForgotPasswordBodySchema>;
+
+export const ResetPasswordBodySchema = z.object({
+  token: z.string().min(1),
+  newPassword: z.string().min(8),
+});
+
+export type ResetPasswordBody = z.infer<typeof ResetPasswordBodySchema>;

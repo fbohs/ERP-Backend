@@ -1,7 +1,15 @@
+import type { Transaction } from 'kysely';
 import type { AppDb } from '../../shared/db/index.js';
+import type { DB } from '../../types/db.js';
+
+type Executor = AppDb | Transaction<DB>;
 
 export class AuthRepository {
-  constructor(private readonly exec: AppDb) {}
+  constructor(private readonly exec: Executor) {}
+
+  withTx(tx: Transaction<DB>): AuthRepository {
+    return new AuthRepository(tx);
+  }
 
   async findUserByEmail(email: string) {
     return this.exec
@@ -53,6 +61,60 @@ export class AuthRepository {
     await this.exec
       .deleteFrom('Session')
       .where('Session.token', '=', token)
+      .execute();
+  }
+
+  async createPasswordResetToken(userId: string, token: string, expiresAt: Date): Promise<void> {
+    await this.exec
+      .insertInto('PasswordResetToken')
+      .values({ userId, token, expiresAt })
+      .execute();
+  }
+
+  async findPasswordResetToken(token: string) {
+    return this.exec
+      .selectFrom('PasswordResetToken')
+      .innerJoin('User', 'User.id', 'PasswordResetToken.userId')
+      .select([
+        'PasswordResetToken.userId',
+        'PasswordResetToken.expiresAt',
+        'PasswordResetToken.usedAt',
+        'User.email',
+        'User.name',
+      ])
+      .where('PasswordResetToken.token', '=', token)
+      .executeTakeFirst();
+  }
+
+  async markTokenUsed(token: string): Promise<void> {
+    await this.exec
+      .updateTable('PasswordResetToken')
+      .set({ usedAt: new Date() })
+      .where('PasswordResetToken.token', '=', token)
+      .execute();
+  }
+
+  async getUserSessionTokens(userId: string): Promise<string[]> {
+    const rows = await this.exec
+      .selectFrom('Session')
+      .select('Session.token')
+      .where('Session.userId', '=', userId)
+      .execute();
+    return rows.map((r) => r.token);
+  }
+
+  async deleteUserSessions(userId: string): Promise<void> {
+    await this.exec
+      .deleteFrom('Session')
+      .where('Session.userId', '=', userId)
+      .execute();
+  }
+
+  async updateUserPassword(userId: string, passwordHash: string): Promise<void> {
+    await this.exec
+      .updateTable('User')
+      .set({ password: passwordHash })
+      .where('User.id', '=', userId)
       .execute();
   }
 }

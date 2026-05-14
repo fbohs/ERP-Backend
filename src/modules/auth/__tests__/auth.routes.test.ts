@@ -3,6 +3,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testconta
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 import { Pool } from 'pg';
 import * as argon2 from 'argon2';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,10 +11,15 @@ import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../../../app.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MIGRATION_SQL = fs.readFileSync(
-  path.resolve(__dirname, '../../../../prisma/migrations/20260514142014_init/migration.sql'),
-  'utf-8',
-);
+const MIGRATIONS_DIR = path.resolve(__dirname, '../../../../prisma/migrations');
+
+function loadMigrations(): string[] {
+  return fs
+    .readdirSync(MIGRATIONS_DIR)
+    .filter((entry) => fs.statSync(path.join(MIGRATIONS_DIR, entry)).isDirectory())
+    .sort()
+    .map((dir) => fs.readFileSync(path.join(MIGRATIONS_DIR, dir, 'migration.sql'), 'utf-8'));
+}
 
 describe('auth routes', () => {
   let app: FastifyInstance;
@@ -29,7 +35,9 @@ describe('auth routes', () => {
     ]);
 
     pool = new Pool({ connectionString: pgContainer.getConnectionUri() });
-    await pool.query(MIGRATION_SQL);
+    for (const sql of loadMigrations()) {
+      await pool.query(sql);
+    }
 
     const tenantResult = await pool.query<{ id: string }>(
       `INSERT INTO "Tenant" (name, slug) VALUES ('Acme Corp', 'acme') RETURNING id`,
@@ -50,9 +58,18 @@ describe('auth routes', () => {
       [tenantId, inactiveHash],
     );
 
+    const resetHash = await argon2.hash('reset-original-password');
+    await pool.query(
+      `INSERT INTO "User" ("tenantId", email, name, password, role)
+       VALUES ($1, 'reset@acme.com', 'Reset User', $2, 'VIEWER')`,
+      [tenantId, resetHash],
+    );
+
+    const redisUrl = `redis://${redisContainer.getHost()}:${redisContainer.getFirstMappedPort()}`;
     app = await buildApp({
       databaseUrl: pgContainer.getConnectionUri(),
-      redisUrl: `redis://${redisContainer.getHost()}:${redisContainer.getFirstMappedPort()}`,
+      redisUrl,
+      queueRedisUrl: redisUrl,
     });
     await app.ready();
   }, 90_000);
@@ -109,7 +126,7 @@ describe('auth routes', () => {
       expect(res.statusCode).toBe(401);
     });
 
-    it('returns 400 on missing fields', async () => {
+    it('returns 422 on missing fields', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/auth/login',
@@ -141,6 +158,143 @@ describe('auth routes', () => {
         headers: { authorization: `Bearer ${sessionToken}` },
       });
       expect(res.statusCode).toBe(401);
+    });
+  });
+
+  describe('POST /auth/forgot-password', () => {
+    it('returns 200 when email exists and creates a reset token', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/forgot-password',
+        payload: { email: 'admin@acme.com' },
+      });
+      expect(res.statusCode).toBe(200);
+
+      const result = await pool.query<{ token: string }>(
+        `SELECT prt.token FROM "PasswordResetToken" prt
+         JOIN "User" u ON u.id = prt."userId"
+         WHERE u.email = 'admin@acme.com'
+         ORDER BY prt."createdAt" DESC LIMIT 1`,
+      );
+      expect(result.rows.length).toBe(1);
+      expect(result.rows[0]!.token.length).toBeGreaterThan(0);
+    });
+
+    it('returns 200 when email does not exist (no enumeration)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/forgot-password',
+        payload: { email: 'nobody@acme.com' },
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('returns 422 on invalid email format', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/forgot-password',
+        payload: { email: 'not-an-email' },
+      });
+      expect(res.statusCode).toBe(422);
+    });
+  });
+
+  describe('POST /auth/reset-password', () => {
+    let validToken: string;
+    let expiredToken: string;
+    let usedToken: string;
+    let preResetSessionToken: string;
+
+    beforeAll(async () => {
+      const loginRes = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        payload: { email: 'reset@acme.com', password: 'reset-original-password' },
+      });
+      preResetSessionToken = loginRes.json<{ token: string }>().token;
+
+      const userResult = await pool.query<{ id: string }>(
+        `SELECT id FROM "User" WHERE email = 'reset@acme.com'`,
+      );
+      const userId = userResult.rows[0]!.id;
+
+      validToken = crypto.randomBytes(32).toString('hex');
+      expiredToken = crypto.randomBytes(32).toString('hex');
+      usedToken = crypto.randomBytes(32).toString('hex');
+
+      await pool.query(
+        `INSERT INTO "PasswordResetToken" (token, "userId", "expiresAt") VALUES ($1, $2, $3)`,
+        [validToken, userId, new Date(Date.now() + 30 * 60 * 1_000)],
+      );
+      await pool.query(
+        `INSERT INTO "PasswordResetToken" (token, "userId", "expiresAt") VALUES ($1, $2, $3)`,
+        [expiredToken, userId, new Date(Date.now() - 1_000)],
+      );
+      await pool.query(
+        `INSERT INTO "PasswordResetToken" (token, "userId", "expiresAt", "usedAt") VALUES ($1, $2, $3, $4)`,
+        [usedToken, userId, new Date(Date.now() + 30 * 60 * 1_000), new Date()],
+      );
+    });
+
+    it('returns 200, updates password, and invalidates all sessions on valid token', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/reset-password',
+        payload: { token: validToken, newPassword: 'reset-new-password-456' },
+      });
+      expect(res.statusCode).toBe(200);
+
+      // pre-reset session must now be rejected
+      const oldSessionRes = await app.inject({
+        method: 'DELETE',
+        url: '/auth/logout',
+        headers: { authorization: `Bearer ${preResetSessionToken}` },
+      });
+      expect(oldSessionRes.statusCode).toBe(401);
+
+      // new password must work
+      const loginRes = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        payload: { email: 'reset@acme.com', password: 'reset-new-password-456' },
+      });
+      expect(loginRes.statusCode).toBe(200);
+    });
+
+    it('returns 401 on expired token', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/reset-password',
+        payload: { token: expiredToken, newPassword: 'any-password' },
+      });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('returns 401 on already-used token', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/reset-password',
+        payload: { token: usedToken, newPassword: 'any-password' },
+      });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('returns 401 on unknown token', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/reset-password',
+        payload: { token: 'a'.repeat(64), newPassword: 'any-password' },
+      });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('returns 422 on missing fields', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/reset-password',
+        payload: { token: validToken },
+      });
+      expect(res.statusCode).toBe(422);
     });
   });
 });

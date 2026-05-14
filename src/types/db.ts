@@ -234,6 +234,14 @@ export type GoodsReceiptLine = {
     unitCost: string;
     notes: string | null;
 };
+export type PasswordResetToken = {
+    id: Generated<string>;
+    token: string;
+    userId: string;
+    expiresAt: Timestamp;
+    usedAt: Timestamp | null;
+    createdAt: Generated<Timestamp>;
+};
 export type PriceList = {
     id: Generated<string>;
     publicId: Generated<string>;
@@ -657,6 +665,7 @@ export type DB = {
     DocumentSequence: DocumentSequence;
     GoodsReceipt: GoodsReceipt;
     GoodsReceiptLine: GoodsReceiptLine;
+    PasswordResetToken: PasswordResetToken;
     PriceList: PriceList;
     PriceListItem: PriceListItem;
     Product: Product;
