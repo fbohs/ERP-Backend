@@ -23,6 +23,10 @@ Open-source ERP backend (accounting, HR, inventory). Money moves, ledgers must r
 
 Anything outside this list → ADR (`/adr`).
 
+**Package versions are always exact.** No `^` or `~` in `package.json`. Use `npm install --save-exact` / `npm install --save-dev --save-exact`.
+
+**After adding packages, audit for unused ones.** Grep `src/` for imports of every existing package. Remove anything with zero imports that is not a locked stack dependency (stack deps like `bullmq`, `decimal.js` are retained even if not yet used — they will be). Use `npm uninstall` to remove from both `package.json` and `node_modules`.
+
 ## Folder Map
 
 ```
@@ -85,6 +89,11 @@ These apply everywhere. Violating any of them blocks a PR.
 - Adding a background job → `.claude/skills/add-bullmq-job/SKILL.md`.
 - Writing a query → `.claude/skills/tenant-scoped-query/SKILL.md`.
 - Need depth on something (SOLID specifics, error hierarchy, observability, caching strategy, performance budgets, security) → `docs/engineering-charter.md`.
+
+## Commit Messages
+
+- Write commit messages as plain engineering summaries.
+- **No `Co-Authored-By` trailers**, no AI attribution, no mention of Claude or any assistant tool — ever.
 
 ## Interaction Protocol
 

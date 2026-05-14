@@ -10,6 +10,7 @@ export const config = {
   logLevel: rawLogLevel ?? 'info',
   databaseUrl: process.env['DATABASE_URL'] ?? '',
   redisUrl: process.env['REDIS_URL'] ?? '',
+  sessionTtlSeconds: 28_800, // 8 hours, absolute expiry
   get isProduction() {
     return this.nodeEnv === 'production';
   },
