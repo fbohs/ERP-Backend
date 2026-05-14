@@ -1,0 +1,34 @@
+{
+  "_comment_about_this_file": "Claude Code hooks for the ERP backend. Hooks enforce things prose can't reliably catch. The real hook API receives a JSON payload on stdin (containing tool_name, tool_input, file_path, etc.) — parse it with 'jq' or a small script. The shell scripts referenced below live in .claude/hooks/. Verify input shape against the current docs at https://docs.claude.com, or use the interactive '/hooks' command inside Claude Code to configure these through a menu rather than editing JSON by hand.",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": ".claude/hooks/block-prisma-outside-db.sh" },
+          { "type": "command", "command": ".claude/hooks/block-console-log.sh" },
+          { "type": "command", "command": ".claude/hooks/block-raw-process-env.sh" }
+        ]
+      }
+    ],
+
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": ".claude/hooks/lint-changed-file.sh" },
+          { "type": "command", "command": ".claude/hooks/remind-after-schema-change.sh" }
+        ]
+      }
+    ],
+
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": ".claude/hooks/warn-skip-checks.sh" }
+        ]
+      }
+    ]
+  }
+}

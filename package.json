@@ -1,0 +1,41 @@
+{
+  "name": "erp-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.15.0"
+  },
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env.local --import tsx/esm --watch src/main.ts",
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "decimal.js": "^10.4.3",
+    "fastify": "^5.0.0",
+    "ioredis": "^5.10.1",
+    "pg": "^8.20.0",
+    "pino": "^9.0.0",
+    "pino-pretty": "^11.0.0",
+    "uuid": "^10.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.20.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@vitest/coverage-v8": "^2.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "~6.0.0",
+    "vitest": "^2.0.0"
+  }
+}

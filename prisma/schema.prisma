@@ -1,0 +1,1145 @@
+// ============================================================================
+// ERP Backend Schema
+// Domains: Identity, Product Catalog, Inventory, Supplier/Purchasing, Sales
+//
+// Design principles:
+//   1. StockMovement is an IMMUTABLE LEDGER — never updated, never deleted.
+//      StockLevel is a materialized snapshot, rebuildable from movements.
+//   2. Documents follow header + lines pattern (PO, GRN, SO, Shipment, etc).
+//   3. Every document has a human-readable docNumber from DocumentSequence.
+//   4. Product (template) vs ProductVariant (sellable SKU) — always separate,
+//      single-variant products get exactly one variant row.
+//   5. Multi-warehouse from day one. StockLevel keyed by (variant, warehouse).
+//   6. Decimal(18, 4) for money & quantity — enough headroom for aggregates
+//      and fractional units (3.5 kg, 0.25 hr).
+//   7. Snapshot at transaction time (addresses on orders, costs on receipts)
+//      to keep history immutable when masters change.
+//   8. Multi-tenant SaaS: every business table carries tenantId. A missing
+//      tenant_id filter is a P0 security bug. UnitOfMeasure is global (shared
+//      lookup); all other business tables are tenant-scoped.
+//   9. Category subtree queries use WITH RECURSIVE CTE — no path column.
+//  10. StockSerial tracks individual units for isSerialTracked products.
+//  11. PriceList / PriceListItem support customer-tier and date-effective
+//      pricing. ProductVariant.listPrice is the fallback default.
+// ============================================================================
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+generator client {
+    provider = "prisma-client-js"
+}
+
+generator kysely {
+    provider = "prisma-kysely"
+    output   = "../src/types"
+    fileName = "db.ts"
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum UserRole {
+    ADMIN
+    INVENTORY_MANAGER
+    PURCHASING_MANAGER
+    SALES_MANAGER
+    WAREHOUSE_OPERATOR
+    ACCOUNTANT
+    VIEWER
+}
+
+enum PartyType {
+    INDIVIDUAL
+    BUSINESS
+}
+
+enum ProductType {
+    GOODS   // physical, stock-tracked
+    SERVICE // intangible, not stock-tracked
+    // BUNDLE removed — add back with BundleComponent table when ready
+}
+
+enum ProductStatus {
+    DRAFT
+    ACTIVE
+    DISCONTINUED
+    ARCHIVED
+}
+
+enum SerialStatus {
+    IN_STOCK
+    RESERVED
+    SHIPPED
+    RETURNED
+    SCRAPPED
+}
+
+enum PriceListType {
+    SALES
+    PURCHASE
+}
+
+enum WarehouseType {
+    STANDARD
+    TRANSIT
+    QUARANTINE
+    RETURNS
+    VIRTUAL // for drop-ship, consignment, etc.
+}
+
+enum StockMovementType {
+    PURCHASE_RECEIPT // +qty from PO goods receipt
+    SALES_ISSUE      // -qty from shipment to customer
+    SALES_RETURN     // +qty from customer return
+    PURCHASE_RETURN  // -qty returned to supplier
+    ADJUSTMENT_IN    // +qty manual adjustment
+    ADJUSTMENT_OUT   // -qty manual adjustment
+    TRANSFER_OUT     // -qty leaving source warehouse
+    TRANSFER_IN      // +qty arriving destination warehouse
+    OPENING_BALANCE  // initial seed at go-live
+    PRODUCTION_IN    // +qty manufactured (reserved for future)
+    PRODUCTION_OUT   // -qty consumed in mfg (reserved)
+}
+
+enum AdjustmentReason {
+    CYCLE_COUNT
+    DAMAGE
+    THEFT
+    EXPIRY
+    CORRECTION
+    OTHER
+}
+
+enum TransferStatus {
+    DRAFT
+    IN_TRANSIT
+    RECEIVED
+    CANCELLED
+}
+
+enum PurchaseOrderStatus {
+    DRAFT
+    SUBMITTED
+    APPROVED
+    SENT
+    PARTIALLY_RECEIVED
+    RECEIVED
+    BILLED
+    CLOSED
+    CANCELLED
+}
+
+enum GoodsReceiptStatus {
+    DRAFT
+    POSTED   // stock movements written
+    REVERSED
+}
+
+enum SalesOrderStatus {
+    DRAFT
+    CONFIRMED
+    ALLOCATED // stock reserved
+    PARTIALLY_FULFILLED
+    FULFILLED
+    INVOICED
+    CLOSED
+    CANCELLED
+    ON_HOLD
+}
+
+enum ShipmentStatus {
+    PENDING
+    PICKED
+    PACKED
+    SHIPPED
+    DELIVERED
+    RETURNED
+    CANCELLED
+}
+
+enum SupplierStatus {
+    PENDING_APPROVAL
+    ACTIVE
+    INACTIVE
+    BLOCKED
+}
+
+// ============================================================================
+// IDENTITY & SHARED
+// ============================================================================
+
+// One row per subscribing company. tenantId on all business tables FKs here
+// logically, but we intentionally omit the FK constraint on every table —
+// the relation is enforced at the application boundary (auth middleware).
+model Tenant {
+    id        BigInt   @id @default(autoincrement())
+    publicId  String   @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    name      String
+    slug      String   @unique
+    isActive  Boolean  @default(true)
+    plan      String   @default("starter")
+    createdAt DateTime @default(now())
+    updatedAt DateTime @default(now()) @updatedAt
+
+    users User[]
+}
+
+model User {
+    id       BigInt @id @default(autoincrement())
+    publicId String @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId BigInt
+
+    email    String   @unique // globally unique — used for login
+    phone    String?
+    name     String
+    password String
+    role     UserRole @default(VIEWER)
+    isActive Boolean  @default(true)
+
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @default(now()) @updatedAt
+    sessions  Session[]
+
+    tenant Tenant @relation(fields: [tenantId], references: [id])
+
+    @@index([tenantId, role])
+    @@index([tenantId, isActive])
+}
+
+model Session {
+    id        BigInt   @id @default(autoincrement())
+    token     String   @unique
+    userId    BigInt
+    expiresAt DateTime
+    createdAt DateTime @default(now())
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@index([userId])
+    @@index([expiresAt])
+}
+
+// Per-tenant document numbering. Unique on (tenantId, code) so each tenant
+// gets independent sequences starting from 00001.
+model DocumentSequence {
+    id         BigInt   @id @default(autoincrement())
+    tenantId   BigInt
+    code       String   // "SO", "PO", "GRN", "SHP", "ADJ", "TRF"
+    prefix     String   // "SO-2026-"
+    nextNumber Int      @default(1)
+    padding    Int      @default(5) // -> "SO-2026-00001"
+    updatedAt  DateTime @default(now()) @updatedAt
+
+    @@unique([tenantId, code])
+    @@index([tenantId])
+}
+
+// Shared address table. A row belongs to exactly one of: supplier, customer.
+// DB-level exclusivity is enforced via a raw SQL CHECK constraint added in
+// the migration — Prisma cannot express it in schema syntax:
+//   CHECK ((supplierId IS NOT NULL)::int + (customerId IS NOT NULL)::int = 1)
+// Order-time shipping/billing addresses are JSON-snapshotted on the order
+// itself so master edits don't rewrite history.
+model Address {
+    id         BigInt  @id @default(autoincrement())
+    publicId   String  @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId   BigInt
+    label      String? // "HQ", "Warehouse Gate B", "Billing"
+    line1      String
+    line2      String?
+    city       String
+    state      String
+    country    String  // ISO 3166-1 alpha-2
+    postalCode String
+
+    supplierId BigInt?
+    customerId BigInt?
+
+    isDefault  Boolean @default(false)
+    isShipping Boolean @default(true)
+    isBilling  Boolean @default(true)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @default(now()) @updatedAt
+
+    supplier Supplier? @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+    customer Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+    @@index([tenantId, supplierId])
+    @@index([tenantId, customerId])
+}
+
+// ============================================================================
+// PRODUCT CATALOG
+// ============================================================================
+
+// Self-referential category tree. Subtree queries use WITH RECURSIVE CTE —
+// no materialized path column. Avoids silent staleness on reparent operations.
+model Category {
+    id          BigInt     @id @default(autoincrement())
+    publicId    String     @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId    BigInt
+    name        String
+    slug        String
+    description String?
+    parentId    BigInt?
+    isActive    Boolean    @default(true)
+    createdAt   DateTime   @default(now())
+    updatedAt   DateTime   @default(now()) @updatedAt
+
+    parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+    children Category[] @relation("CategoryTree")
+    products Product[]
+
+    @@unique([tenantId, slug])
+    @@unique([tenantId, parentId, name])
+    @@index([tenantId])
+    @@index([tenantId, parentId])
+}
+
+model Brand {
+    id        BigInt    @id @default(autoincrement())
+    publicId  String    @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId  BigInt
+    name      String
+    slug      String
+    isActive  Boolean   @default(true)
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @default(now()) @updatedAt
+
+    products Product[]
+
+    @@unique([tenantId, name])
+    @@unique([tenantId, slug])
+    @@index([tenantId])
+}
+
+// Global shared lookup — not per-tenant. All tenants share the same UoM
+// registry (EA, KG, LTR, etc.). Derived units carry conversion to a base
+// unit of the same category (1 KG = 1000 G when base = G).
+model UnitOfMeasure {
+    id           BigInt   @id @default(autoincrement())
+    code         String   @unique // "EA", "KG", "LTR", "M", "BOX"
+    name         String   // "Each", "Kilogram"
+    category     String   // "count", "weight", "volume", "length"
+    baseUnitCode String?
+    conversion   Decimal? @db.Decimal(18, 6)
+    isActive     Boolean  @default(true)
+
+    products ProductVariant[]
+    variants Product[]
+}
+
+// Product = master / template. ProductVariant = sellable SKU.
+// Products with no real variants still get ONE default variant row.
+model Product {
+    id          BigInt        @id @default(autoincrement())
+    publicId    String        @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId    BigInt
+    sku         String        // unique per tenant
+    name        String
+    slug        String        // unique per tenant
+    description String?
+    type        ProductType   @default(GOODS)
+    status      ProductStatus @default(DRAFT)
+
+    categoryId BigInt
+    brandId    BigInt?
+    uomId      BigInt // base/selling UoM
+
+    isStockTracked  Boolean @default(true)
+    isBatchTracked  Boolean @default(false) // requires lot per movement
+    isSerialTracked Boolean @default(false) // requires serial per unit
+
+    images    String[] @default([])
+    hsnCode   String?  // tax classification (India HSN / global HS code)
+    weight    Decimal? @db.Decimal(18, 4)
+    weightUom String?  // "KG", "LB"
+
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @default(now()) @updatedAt
+    createdById BigInt?
+
+    category  Category          @relation(fields: [categoryId], references: [id])
+    brand     Brand?            @relation(fields: [brandId], references: [id])
+    uom       UnitOfMeasure     @relation(fields: [uomId], references: [id])
+    variants  ProductVariant[]
+    suppliers ProductSupplier[]
+
+    @@unique([tenantId, sku])
+    @@unique([tenantId, slug])
+    @@index([tenantId, status])
+    @@index([tenantId, categoryId])
+    @@index([tenantId, brandId])
+}
+
+// Variant axes — e.g. Size, Color, Material.
+model ProductAttribute {
+    id        BigInt                  @id @default(autoincrement())
+    tenantId  BigInt
+    name      String
+    values    ProductAttributeValue[]
+    createdAt DateTime                @default(now())
+
+    @@unique([tenantId, name])
+    @@index([tenantId])
+}
+
+model ProductAttributeValue {
+    id          BigInt   @id @default(autoincrement())
+    tenantId    BigInt
+    attributeId BigInt
+    value       String   // "Red", "XL", "Cotton"
+    sortOrder   Int      @default(0)
+
+    attribute ProductAttribute          @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+    variants  ProductVariantAttribute[]
+
+    @@unique([attributeId, value])
+    @@index([tenantId])
+}
+
+model ProductVariant {
+    id        BigInt  @id @default(autoincrement())
+    publicId  String  @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId  BigInt
+    productId BigInt
+    sku       String  // unique per tenant
+    barcode   String? // EAN / UPC / GTIN — unique per tenant when non-null
+    name      String? // optional override; usually computed from product + attrs
+
+    uomId BigInt // sellable UoM (often same as product)
+
+    // listPrice is the fallback default — overridden by PriceListItem rows.
+    // standardCost is for valuation; updated by costing policy (FIFO/MA/STD).
+    listPrice    Decimal  @db.Decimal(18, 4)
+    standardCost Decimal? @db.Decimal(18, 4)
+
+    weight    Decimal? @db.Decimal(18, 4)
+    weightUom String?
+
+    isActive  Boolean  @default(true)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @default(now()) @updatedAt
+
+    product            Product                   @relation(fields: [productId], references: [id], onDelete: Cascade)
+    uom                UnitOfMeasure             @relation(fields: [uomId], references: [id])
+    attributes         ProductVariantAttribute[]
+    stockLevels        StockLevel[]
+    stockMovements     StockMovement[]
+    stockReservations  StockReservation[]
+    stockLots          StockLot[]
+    stockSerials       StockSerial[]
+    adjustmentLines    StockAdjustmentLine[]
+    transferLines      StockTransferLine[]
+    purchaseOrderLines PurchaseOrderLine[]
+    goodsReceiptLines  GoodsReceiptLine[]
+    salesOrderLines    SalesOrderLine[]
+    priceListItems     PriceListItem[]
+
+    @@unique([tenantId, sku])
+    @@unique([tenantId, barcode])
+    @@index([tenantId, productId])
+    @@index([tenantId, isActive])
+}
+
+model ProductVariantAttribute {
+    variantId        BigInt
+    attributeValueId BigInt
+
+    variant        ProductVariant        @relation(fields: [variantId], references: [id], onDelete: Cascade)
+    attributeValue ProductAttributeValue @relation(fields: [attributeValueId], references: [id])
+
+    @@id([variantId, attributeValueId])
+}
+
+// Many-to-many: which suppliers can supply a product, with supplier-specific
+// cost, lead time, MOQ. isPrimary marks the preferred source for reordering.
+model ProductSupplier {
+    id           BigInt   @id @default(autoincrement())
+    tenantId     BigInt
+    productId    BigInt
+    supplierId   BigInt
+    supplierSku  String?  // supplier's own SKU for this product
+    cost         Decimal  @db.Decimal(18, 4)
+    currency     String   @default("INR")
+    leadTimeDays Int      @default(0)
+    minOrderQty  Decimal  @default(1) @db.Decimal(18, 4)
+    isPrimary    Boolean  @default(false)
+    isActive     Boolean  @default(true)
+    createdAt    DateTime @default(now())
+    updatedAt    DateTime @default(now()) @updatedAt
+
+    product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+    supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+    @@unique([tenantId, productId, supplierId])
+    @@index([tenantId, supplierId])
+}
+
+// Customer-tier and date-effective price lists. Lookup order at order time:
+//   1. Active PriceListItem matching (tenantId, variantId, minQty) for this customer's list
+//   2. Fallback: ProductVariant.listPrice
+model PriceList {
+    id        BigInt        @id @default(autoincrement())
+    publicId  String        @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId  BigInt
+    name      String
+    type      PriceListType @default(SALES)
+    currency  String        @default("INR")
+    isDefault Boolean       @default(false)
+    validFrom DateTime?
+    validTo   DateTime?
+    isActive  Boolean       @default(true)
+    createdAt DateTime      @default(now())
+    updatedAt DateTime      @default(now()) @updatedAt
+
+    items PriceListItem[]
+
+    @@index([tenantId])
+    @@index([tenantId, isDefault])
+    @@index([tenantId, validFrom, validTo])
+}
+
+model PriceListItem {
+    id          BigInt   @id @default(autoincrement())
+    tenantId    BigInt
+    priceListId BigInt
+    variantId   BigInt
+    unitPrice   Decimal  @db.Decimal(18, 4)
+    minQty      Decimal  @default(1) @db.Decimal(18, 4) // volume pricing threshold
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @default(now()) @updatedAt
+
+    priceList PriceList      @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+    variant   ProductVariant @relation(fields: [variantId], references: [id])
+
+    @@unique([priceListId, variantId, minQty])
+    @@index([tenantId, variantId])
+}
+
+// ============================================================================
+// INVENTORY
+// ============================================================================
+
+model Warehouse {
+    id       BigInt        @id @default(autoincrement())
+    publicId String        @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId BigInt
+    code     String        // unique per tenant, e.g. "WH-MUM-01"
+    name     String
+    type     WarehouseType @default(STANDARD)
+
+    addressLine1 String?
+    addressLine2 String?
+    city         String?
+    state        String?
+    country      String?
+    postalCode   String?
+
+    isActive       Boolean @default(true)
+    allowsNegative Boolean @default(false)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @default(now()) @updatedAt
+
+    binLocations   BinLocation[]
+    stockLevels    StockLevel[]
+    stockMovements StockMovement[]
+    stockSerials   StockSerial[]
+    adjustments    StockAdjustment[]
+    transfersOut   StockTransfer[]   @relation("TransferFrom")
+    transfersIn    StockTransfer[]   @relation("TransferTo")
+    purchaseOrders PurchaseOrder[]
+    goodsReceipts  GoodsReceipt[]
+    salesOrders    SalesOrder[]
+
+    @@unique([tenantId, code])
+    @@index([tenantId, isActive])
+}
+
+// Bin-level locations within a warehouse. StockLevel keys on warehouse for
+// V1; bin-level putaway/picking can be layered on later without migration.
+model BinLocation {
+    id          BigInt    @id @default(autoincrement())
+    tenantId    BigInt
+    warehouseId BigInt
+    code        String    // "A-12-03" (aisle-rack-shelf)
+    description String?
+    isActive    Boolean   @default(true)
+
+    warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+    @@unique([warehouseId, code])
+    @@index([tenantId, warehouseId])
+}
+
+// Lot / batch for batch-tracked products. Required on movements when
+// Product.isBatchTracked = true.
+model StockLot {
+    id             BigInt    @id @default(autoincrement())
+    tenantId       BigInt
+    variantId      BigInt
+    lotNumber      String
+    expiryDate     DateTime?
+    manufacturedAt DateTime?
+    receivedAt     DateTime  @default(now())
+    notes          String?
+
+    variant           ProductVariant        @relation(fields: [variantId], references: [id])
+    movements         StockMovement[]
+    adjustmentLines   StockAdjustmentLine[]
+    transferLines     StockTransferLine[]
+    goodsReceiptLines GoodsReceiptLine[]
+    shipmentLines     ShipmentLine[]
+    serials           StockSerial[]
+
+    @@unique([tenantId, variantId, lotNumber])
+    @@index([tenantId, expiryDate])
+}
+
+// Stock snapshot per (variant, warehouse). MATERIALIZED from StockMovement.
+// available = onHand - reserved (computed app-side or via view).
+// incoming = sum of open PO line quantities for forward planning.
+// Reorder alert fires when (onHand - reserved) <= reorderPoint.
+model StockLevel {
+    id          BigInt  @id @default(autoincrement())
+    tenantId    BigInt
+    variantId   BigInt
+    warehouseId BigInt
+    onHand      Decimal @default(0) @db.Decimal(18, 4)
+    reserved    Decimal @default(0) @db.Decimal(18, 4)
+    incoming    Decimal @default(0) @db.Decimal(18, 4)
+
+    reorderPoint  Decimal? @db.Decimal(18, 4)
+    reorderQty    Decimal? @db.Decimal(18, 4)
+    maxStockLevel Decimal? @db.Decimal(18, 4)
+
+    updatedAt DateTime @default(now()) @updatedAt
+
+    variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+    warehouse Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+    @@unique([tenantId, variantId, warehouseId])
+    @@index([tenantId, warehouseId])
+}
+
+// IMMUTABLE LEDGER. Every quantity change is one row. Never UPDATE, never
+// DELETE — corrections happen via offsetting movements. Quantity is SIGNED:
+// positive = stock in, negative = stock out.
+//
+// Source pointers carry no FK constraints to keep this table append-only and
+// decoupled from upstream documents. StockLevel is rebuilt by summing
+// movements grouped by (tenantId, variantId, warehouseId).
+model StockMovement {
+    id          BigInt            @id @default(autoincrement())
+    publicId    String            @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId    BigInt
+    variantId   BigInt
+    warehouseId BigInt
+    lotId       BigInt?
+
+    type     StockMovementType
+    quantity Decimal           @db.Decimal(18, 4) // signed
+    unitCost Decimal?          @db.Decimal(18, 4) // for valuation rollup
+
+    // Exactly one populated — no FKs intentional (append-only ledger).
+    sourceGoodsReceiptLineId BigInt?
+    sourceShipmentLineId     BigInt?
+    sourceAdjustmentLineId   BigInt?
+    sourceTransferLineId     BigInt?
+
+    occurredAt  DateTime @default(now()) // business time
+    createdAt   DateTime @default(now()) // system time
+    createdById BigInt?
+    notes       String?
+
+    variant   ProductVariant @relation(fields: [variantId], references: [id])
+    warehouse Warehouse      @relation(fields: [warehouseId], references: [id])
+    lot       StockLot?      @relation(fields: [lotId], references: [id])
+
+    @@index([tenantId, variantId, warehouseId, occurredAt])
+    @@index([tenantId, type])
+    @@index([tenantId, occurredAt])
+}
+
+// Individual serial number tracking. One row per physical unit.
+// Created on goods receipt; status progresses through lifecycle.
+// Required when Product.isSerialTracked = true.
+// goodsReceiptLineId / shipmentLineId are scalar source pointers (no FKs)
+// matching the loose-coupling pattern used on StockMovement.
+model StockSerial {
+    id           BigInt       @id @default(autoincrement())
+    publicId     String       @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId     BigInt
+    variantId    BigInt
+    warehouseId  BigInt?      // null until putaway
+    lotId        BigInt?      // set when product is also batch-tracked
+    serialNumber String
+
+    status SerialStatus @default(IN_STOCK)
+
+    goodsReceiptLineId BigInt? // no FK — loose coupling, see StockMovement pattern
+    shipmentLineId     BigInt?
+
+    notes     String?
+    createdAt DateTime @default(now())
+    updatedAt DateTime @default(now()) @updatedAt
+
+    variant   ProductVariant @relation(fields: [variantId], references: [id])
+    warehouse Warehouse?     @relation(fields: [warehouseId], references: [id])
+    lot       StockLot?      @relation(fields: [lotId], references: [id])
+
+    @@unique([tenantId, variantId, serialNumber])
+    @@index([tenantId, variantId])
+    @@index([tenantId, warehouseId])
+    @@index([tenantId, status])
+}
+
+// Soft reservation. Held against an SO line but stock is still physically
+// present. Released on cancellation or expiry.
+model StockReservation {
+    id          BigInt   @id @default(autoincrement())
+    tenantId    BigInt
+    variantId   BigInt
+    warehouseId BigInt
+    quantity    Decimal  @db.Decimal(18, 4)
+
+    salesOrderLineId BigInt?   @unique
+    expiresAt        DateTime?
+
+    createdAt   DateTime @default(now())
+    createdById BigInt?
+
+    variant        ProductVariant  @relation(fields: [variantId], references: [id])
+    salesOrderLine SalesOrderLine? @relation(fields: [salesOrderLineId], references: [id])
+
+    @@index([tenantId, variantId, warehouseId])
+}
+
+// Manual adjustment header (cycle count, damage, etc.).
+model StockAdjustment {
+    id          BigInt           @id @default(autoincrement())
+    publicId    String           @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId    BigInt
+    docNumber   String           // unique per tenant
+    warehouseId BigInt
+    reason      AdjustmentReason
+    notes       String?
+    postedAt    DateTime?
+    createdAt   DateTime         @default(now())
+    createdById BigInt?
+
+    warehouse Warehouse             @relation(fields: [warehouseId], references: [id])
+    lines     StockAdjustmentLine[]
+
+    @@unique([tenantId, docNumber])
+    @@index([tenantId, warehouseId])
+    @@index([tenantId, postedAt])
+}
+
+model StockAdjustmentLine {
+    id           BigInt   @id @default(autoincrement())
+    tenantId     BigInt
+    adjustmentId BigInt
+    variantId    BigInt
+    lotId        BigInt?
+    quantity     Decimal  @db.Decimal(18, 4) // signed
+    unitCost     Decimal? @db.Decimal(18, 4)
+    notes        String?
+
+    adjustment StockAdjustment @relation(fields: [adjustmentId], references: [id], onDelete: Cascade)
+    variant    ProductVariant  @relation(fields: [variantId], references: [id])
+    lot        StockLot?       @relation(fields: [lotId], references: [id])
+
+    @@index([tenantId, adjustmentId])
+    @@index([tenantId, variantId])
+}
+
+// Inter-warehouse transfer. Two-step posting: TRANSFER_OUT on ship,
+// TRANSFER_IN on receive. In-transit qty lives in a transit warehouse
+// or implicitly between the two timestamps.
+model StockTransfer {
+    id              BigInt         @id @default(autoincrement())
+    publicId        String         @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId        BigInt
+    docNumber       String         // unique per tenant
+    fromWarehouseId BigInt
+    toWarehouseId   BigInt
+    status          TransferStatus @default(DRAFT)
+    shippedAt       DateTime?
+    receivedAt      DateTime?
+    notes           String?
+    createdAt       DateTime       @default(now())
+    createdById     BigInt?
+
+    fromWarehouse Warehouse           @relation("TransferFrom", fields: [fromWarehouseId], references: [id])
+    toWarehouse   Warehouse           @relation("TransferTo", fields: [toWarehouseId], references: [id])
+    lines         StockTransferLine[]
+
+    @@unique([tenantId, docNumber])
+    @@index([tenantId, status])
+    @@index([tenantId, fromWarehouseId])
+    @@index([tenantId, toWarehouseId])
+}
+
+model StockTransferLine {
+    id               BigInt  @id @default(autoincrement())
+    tenantId         BigInt
+    transferId       BigInt
+    variantId        BigInt
+    lotId            BigInt?
+    quantityShipped  Decimal @db.Decimal(18, 4)
+    quantityReceived Decimal @default(0) @db.Decimal(18, 4)
+
+    transfer StockTransfer  @relation(fields: [transferId], references: [id], onDelete: Cascade)
+    variant  ProductVariant @relation(fields: [variantId], references: [id])
+    lot      StockLot?      @relation(fields: [lotId], references: [id])
+
+    @@index([tenantId, transferId])
+    @@index([tenantId, variantId])
+}
+
+// ============================================================================
+// SUPPLIER / PURCHASING
+// ============================================================================
+
+model Supplier {
+    id          BigInt         @id @default(autoincrement())
+    publicId    String         @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId    BigInt
+    code        String         // unique per tenant, e.g. "SUP-00123"
+    legalName   String
+    displayName String?
+    partyType   PartyType      @default(BUSINESS)
+    status      SupplierStatus @default(PENDING_APPROVAL)
+
+    email   String?
+    phone   String?
+    website String?
+
+    taxId String? // GSTIN / VAT / EIN
+    pan   String? // India PAN, optional
+
+    paymentTerms String?
+    creditLimit  Decimal? @db.Decimal(18, 4)
+    currency     String   @default("INR")
+
+    notes     String?
+    createdAt DateTime @default(now())
+    updatedAt DateTime @default(now()) @updatedAt
+
+    addresses      Address[]
+    contacts       SupplierContact[]
+    products       ProductSupplier[]
+    purchaseOrders PurchaseOrder[]
+
+    @@unique([tenantId, code])
+    @@index([tenantId, status])
+}
+
+model SupplierContact {
+    id          BigInt   @id @default(autoincrement())
+    tenantId    BigInt
+    supplierId  BigInt
+    name        String
+    designation String?
+    email       String?
+    phone       String?
+    isPrimary   Boolean  @default(false)
+    isActive    Boolean  @default(true)
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @default(now()) @updatedAt
+
+    supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+    @@index([tenantId, supplierId])
+}
+
+model PurchaseOrder {
+    id          BigInt              @id @default(autoincrement())
+    publicId    String              @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId    BigInt
+    docNumber   String              // unique per tenant, e.g. "PO-2026-00001"
+    supplierId  BigInt
+    warehouseId BigInt              // ship-to
+    status      PurchaseOrderStatus @default(DRAFT)
+
+    orderDate    DateTime  @default(now())
+    expectedDate DateTime?
+    currency     String    @default("INR")
+
+    // Snapshot totals — recomputed from lines, persisted for reporting speed.
+    subtotal      Decimal @default(0) @db.Decimal(18, 4)
+    taxTotal      Decimal @default(0) @db.Decimal(18, 4)
+    shippingTotal Decimal @default(0) @db.Decimal(18, 4)
+    grandTotal    Decimal @default(0) @db.Decimal(18, 4)
+
+    notes       String?
+    supplierRef String?
+
+    approvedAt   DateTime?
+    approvedById BigInt?
+    sentAt       DateTime?
+    closedAt     DateTime?
+
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @default(now()) @updatedAt
+    createdById BigInt?
+
+    supplier  Supplier            @relation(fields: [supplierId], references: [id])
+    warehouse Warehouse           @relation(fields: [warehouseId], references: [id])
+    lines     PurchaseOrderLine[]
+    receipts  GoodsReceipt[]
+
+    @@unique([tenantId, docNumber])
+    @@index([tenantId, status])
+    @@index([tenantId, supplierId])
+    @@index([tenantId, orderDate])
+}
+
+model PurchaseOrderLine {
+    id          BigInt  @id @default(autoincrement())
+    tenantId    BigInt
+    poId        BigInt
+    lineNumber  Int
+    variantId   BigInt
+    description String? // captured at order time
+
+    quantityOrdered   Decimal @db.Decimal(18, 4)
+    quantityReceived  Decimal @default(0) @db.Decimal(18, 4)
+    quantityCancelled Decimal @default(0) @db.Decimal(18, 4)
+
+    unitCost    Decimal @db.Decimal(18, 4)
+    discountPct Decimal @default(0) @db.Decimal(10, 4)
+    taxRate     Decimal @default(0) @db.Decimal(10, 4)
+
+    lineSubtotal Decimal @db.Decimal(18, 4)
+    lineTax      Decimal @default(0) @db.Decimal(18, 4)
+    lineTotal    Decimal @db.Decimal(18, 4)
+
+    expectedDate DateTime?
+
+    purchaseOrder PurchaseOrder      @relation(fields: [poId], references: [id], onDelete: Cascade)
+    variant       ProductVariant     @relation(fields: [variantId], references: [id])
+    receiptLines  GoodsReceiptLine[]
+
+    @@unique([poId, lineNumber])
+    @@index([tenantId, variantId])
+}
+
+// Goods Receipt Note. Recording physical receipt against a PO.
+// Posting writes StockMovement rows and bumps PO line received qty.
+model GoodsReceipt {
+    id          BigInt             @id @default(autoincrement())
+    publicId    String             @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId    BigInt
+    docNumber   String             // unique per tenant, e.g. "GRN-2026-00001"
+    poId        BigInt
+    warehouseId BigInt
+    status      GoodsReceiptStatus @default(DRAFT)
+
+    receivedAt           DateTime @default(now())
+    supplierDeliveryNote String?
+    notes                String?
+
+    postedAt   DateTime?
+    postedById BigInt?
+
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @default(now()) @updatedAt
+    createdById BigInt?
+
+    purchaseOrder PurchaseOrder      @relation(fields: [poId], references: [id])
+    warehouse     Warehouse          @relation(fields: [warehouseId], references: [id])
+    lines         GoodsReceiptLine[]
+
+    @@unique([tenantId, docNumber])
+    @@index([tenantId, poId])
+    @@index([tenantId, status])
+    @@index([tenantId, receivedAt])
+}
+
+model GoodsReceiptLine {
+    id        BigInt  @id @default(autoincrement())
+    tenantId  BigInt
+    receiptId BigInt
+    poLineId  BigInt
+    variantId BigInt
+    lotId     BigInt?
+
+    quantityReceived Decimal @db.Decimal(18, 4)
+    quantityRejected Decimal @default(0) @db.Decimal(18, 4)
+    unitCost         Decimal @db.Decimal(18, 4) // can differ from PO if price changed
+
+    notes String?
+
+    receipt GoodsReceipt      @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+    poLine  PurchaseOrderLine @relation(fields: [poLineId], references: [id])
+    variant ProductVariant    @relation(fields: [variantId], references: [id])
+    lot     StockLot?         @relation(fields: [lotId], references: [id])
+
+    @@index([tenantId, receiptId])
+    @@index([tenantId, poLineId])
+    @@index([tenantId, variantId])
+}
+
+// ============================================================================
+// CUSTOMER & SALES ORDER
+// ============================================================================
+
+model Customer {
+    id          BigInt    @id @default(autoincrement())
+    publicId    String    @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId    BigInt
+    code        String    // unique per tenant, e.g. "CUST-00123"
+    legalName   String
+    displayName String?
+    partyType   PartyType @default(BUSINESS)
+
+    email String?
+    phone String?
+
+    taxId        String?
+    paymentTerms String?
+    creditLimit  Decimal? @db.Decimal(18, 4)
+    currency     String   @default("INR")
+
+    isActive  Boolean  @default(true)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @default(now()) @updatedAt
+
+    addresses   Address[]
+    salesOrders SalesOrder[]
+
+    @@unique([tenantId, code])
+    @@index([tenantId, isActive])
+}
+
+model SalesOrder {
+    id          BigInt           @id @default(autoincrement())
+    publicId    String           @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId    BigInt
+    docNumber   String           // unique per tenant, e.g. "SO-2026-00001"
+    customerId  BigInt
+    warehouseId BigInt           // fulfilling warehouse
+    status      SalesOrderStatus @default(DRAFT)
+
+    orderDate     DateTime  @default(now())
+    requestedDate DateTime?
+    currency      String    @default("INR")
+
+    // Snapshot totals.
+    subtotal      Decimal @default(0) @db.Decimal(18, 4)
+    taxTotal      Decimal @default(0) @db.Decimal(18, 4)
+    discountTotal Decimal @default(0) @db.Decimal(18, 4)
+    shippingTotal Decimal @default(0) @db.Decimal(18, 4)
+    grandTotal    Decimal @default(0) @db.Decimal(18, 4)
+
+    customerRef String?
+    notes       String?
+
+    confirmedAt DateTime?
+    closedAt    DateTime?
+    cancelledAt DateTime?
+
+    // JSON snapshot at order time. Customer address edits MUST NOT
+    // retroactively change historical orders.
+    shippingAddress Json?
+    billingAddress  Json?
+
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @default(now()) @updatedAt
+    createdById BigInt?
+
+    customer  Customer         @relation(fields: [customerId], references: [id])
+    warehouse Warehouse        @relation(fields: [warehouseId], references: [id])
+    lines     SalesOrderLine[]
+    shipments Shipment[]
+
+    @@unique([tenantId, docNumber])
+    @@index([tenantId, status])
+    @@index([tenantId, customerId])
+    @@index([tenantId, orderDate])
+}
+
+model SalesOrderLine {
+    id          BigInt  @id @default(autoincrement())
+    tenantId    BigInt
+    soId        BigInt
+    lineNumber  Int
+    variantId   BigInt
+    description String?
+
+    quantityOrdered   Decimal @db.Decimal(18, 4)
+    quantityShipped   Decimal @default(0) @db.Decimal(18, 4)
+    quantityCancelled Decimal @default(0) @db.Decimal(18, 4)
+
+    unitPrice   Decimal @db.Decimal(18, 4)
+    discountPct Decimal @default(0) @db.Decimal(10, 4)
+    taxRate     Decimal @default(0) @db.Decimal(10, 4)
+
+    lineSubtotal Decimal @db.Decimal(18, 4)
+    lineTax      Decimal @default(0) @db.Decimal(18, 4)
+    lineTotal    Decimal @db.Decimal(18, 4)
+
+    salesOrder    SalesOrder        @relation(fields: [soId], references: [id], onDelete: Cascade)
+    variant       ProductVariant    @relation(fields: [variantId], references: [id])
+    shipmentLines ShipmentLine[]
+    reservation   StockReservation?
+
+    @@unique([soId, lineNumber])
+    @@index([tenantId, variantId])
+}
+
+// Shipment = physical pick/pack/ship event against an SO.
+// One SO can have many shipments (partial fulfillment).
+model Shipment {
+    id        BigInt         @id @default(autoincrement())
+    publicId  String         @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+    tenantId  BigInt
+    docNumber String         // unique per tenant, e.g. "SHP-2026-00001"
+    soId      BigInt
+    status    ShipmentStatus @default(PENDING)
+
+    carrier        String?
+    trackingNumber String?
+    shippedAt      DateTime?
+    deliveredAt    DateTime?
+
+    postedAt   DateTime?
+    postedById BigInt?
+
+    notes       String?
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @default(now()) @updatedAt
+    createdById BigInt?
+
+    salesOrder SalesOrder     @relation(fields: [soId], references: [id])
+    lines      ShipmentLine[]
+
+    @@unique([tenantId, docNumber])
+    @@index([tenantId, soId])
+    @@index([tenantId, status])
+    @@index([tenantId, trackingNumber])
+}
+
+model ShipmentLine {
+    id              BigInt  @id @default(autoincrement())
+    tenantId        BigInt
+    shipmentId      BigInt
+    soLineId        BigInt
+    lotId           BigInt?
+    quantityShipped Decimal @db.Decimal(18, 4)
+
+    shipment Shipment       @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+    soLine   SalesOrderLine @relation(fields: [soLineId], references: [id])
+    lot      StockLot?      @relation(fields: [lotId], references: [id])
+
+    @@index([tenantId, shipmentId])
+    @@index([tenantId, soLineId])
+}
