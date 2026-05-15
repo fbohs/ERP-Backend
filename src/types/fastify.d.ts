@@ -7,5 +7,8 @@ declare module 'fastify' {
       tenantId: string;
       role: UserRole;
     };
+    // Set by the idempotency preHandler when a request claims a fresh key;
+    // read by the onSend hook to store the response. Absent on replays.
+    idempotencyKey?: string;
   }
 }

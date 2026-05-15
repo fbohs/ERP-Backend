@@ -18,6 +18,9 @@ export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstanc
   const db = createDb(overrides?.databaseUrl ?? config.databaseUrl);
   const redis = createRedis(overrides?.redisUrl ?? config.redisUrl);
   const queueRedisUrl = overrides?.queueRedisUrl ?? config.queueRedisUrl;
+  // Idempotency keys must survive a restart, so they live on the durable
+  // (AOF-persisted) queue Redis, not the evictable session cache.
+  const queueRedis = createRedis(queueRedisUrl);
 
   // Cast needed: Fastify infers a wider Logger type from loggerInstance
   const app = Fastify({ loggerInstance: logger }) as unknown as FastifyInstance;
@@ -30,6 +33,7 @@ export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstanc
     await emailWorker?.close();
     await db.destroy();
     redis.disconnect();
+    queueRedis.disconnect();
   });
 
   registerErrorHandler(app);
@@ -38,6 +42,7 @@ export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstanc
   await app.register(authPlugin, {
     db,
     redis,
+    queueRedis,
     redisUrl: queueRedisUrl,
     appBaseUrl: config.appBaseUrl,
   });

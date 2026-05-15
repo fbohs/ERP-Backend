@@ -357,4 +357,82 @@ describe('auth routes', () => {
       expect(res.statusCode).toBe(422);
     });
   });
+
+  describe('Idempotency-Key', () => {
+    const adminTokenCount = `SELECT count(*)::int AS n FROM "PasswordResetToken" prt
+       JOIN "User" u ON u.id = prt."userId" WHERE u.email = 'admin@acme.com'`;
+
+    it('replays the stored response and applies the side effect only once', async () => {
+      const idemKey = crypto.randomBytes(16).toString('hex');
+      const before = await pool.query<{ n: number }>(adminTokenCount);
+
+      const first = await app.inject({
+        method: 'POST',
+        url: '/auth/forgot-password',
+        headers: { 'idempotency-key': idemKey },
+        payload: { email: 'admin@acme.com' },
+      });
+      const second = await app.inject({
+        method: 'POST',
+        url: '/auth/forgot-password',
+        headers: { 'idempotency-key': idemKey },
+        payload: { email: 'admin@acme.com' },
+      });
+
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(200);
+
+      const after = await pool.query<{ n: number }>(adminTokenCount);
+      expect(after.rows[0]!.n).toBe(before.rows[0]!.n + 1);
+    });
+
+    it('replays the same login response without creating a second session', async () => {
+      const idemKey = crypto.randomBytes(16).toString('hex');
+      const payload = { email: 'admin@acme.com', password: 'correct-password' };
+
+      const first = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        headers: { 'idempotency-key': idemKey },
+        payload,
+      });
+      const second = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        headers: { 'idempotency-key': idemKey },
+        payload,
+      });
+
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(200);
+      const firstToken = first.json<{ token: string }>().token;
+      expect(second.json<{ token: string }>().token).toBe(firstToken);
+
+      const sessions = await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "Session" WHERE token = $1`,
+        [firstToken],
+      );
+      expect(sessions.rows[0]!.n).toBe(1);
+    });
+
+    it('rejects a key reused with a different request body with 409', async () => {
+      const idemKey = crypto.randomBytes(16).toString('hex');
+
+      const first = await app.inject({
+        method: 'POST',
+        url: '/auth/forgot-password',
+        headers: { 'idempotency-key': idemKey },
+        payload: { email: 'admin@acme.com' },
+      });
+      const conflicting = await app.inject({
+        method: 'POST',
+        url: '/auth/forgot-password',
+        headers: { 'idempotency-key': idemKey },
+        payload: { email: 'reset@acme.com' },
+      });
+
+      expect(first.statusCode).toBe(200);
+      expect(conflicting.statusCode).toBe(409);
+    });
+  });
 });

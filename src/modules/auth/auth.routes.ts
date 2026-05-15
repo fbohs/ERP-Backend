@@ -9,6 +9,7 @@ import { AuthRepository } from './auth.repository.js';
 import { AuthService } from './auth.service.js';
 import { createAuthenticate } from '../../shared/auth/authenticate.js';
 import { AuditRepository } from '../../shared/audit/index.js';
+import { createIdempotency } from '../../shared/idempotency/index.js';
 import { ValidationError } from '../../shared/errors/base.js';
 import { createPasswordResetEmailQueue } from './jobs/send-password-reset-email.js';
 import type { AppDb } from '../../shared/db/index.js';
@@ -17,6 +18,8 @@ import type { Redis } from '../../shared/cache/redis.js';
 interface AuthPluginOptions {
   db: AppDb;
   redis: Redis;
+  // Durable (AOF-persisted) Redis — backs the Idempotency-Key store.
+  queueRedis: Redis;
   redisUrl?: string;
   appBaseUrl: string;
 }
@@ -27,9 +30,11 @@ export const authPlugin: FastifyPluginAsync<AuthPluginOptions> = async (app, opt
   const emailQueue = opts.redisUrl ? createPasswordResetEmailQueue(opts.redisUrl) : null;
   const service = new AuthService(repo, auditRepo, opts.redis, opts.db, emailQueue, opts.appBaseUrl);
   const authenticate = createAuthenticate(opts.db, opts.redis);
+  const idempotency = createIdempotency(opts.queueRedis);
 
   app.post<{ Reply: LoginResponse }>(
     '/auth/login',
+    { preHandler: [idempotency.before], onSend: [idempotency.after] },
     async (request, reply) => {
       const parsed = LoginBodySchema.safeParse(request.body);
       if (!parsed.success) {
@@ -43,7 +48,7 @@ export const authPlugin: FastifyPluginAsync<AuthPluginOptions> = async (app, opt
 
   app.delete(
     '/auth/logout',
-    { preHandler: [authenticate] },
+    { preHandler: [idempotency.before, authenticate], onSend: [idempotency.after] },
     async (request, reply) => {
       const token = request.headers.authorization!.replace('Bearer ', '');
       await service.logout(token, request.user, request.id);
@@ -53,6 +58,7 @@ export const authPlugin: FastifyPluginAsync<AuthPluginOptions> = async (app, opt
 
   app.post(
     '/auth/forgot-password',
+    { preHandler: [idempotency.before], onSend: [idempotency.after] },
     async (request, reply) => {
       const parsed = ForgotPasswordBodySchema.safeParse(request.body);
       if (!parsed.success) {
@@ -66,6 +72,7 @@ export const authPlugin: FastifyPluginAsync<AuthPluginOptions> = async (app, opt
 
   app.post(
     '/auth/reset-password',
+    { preHandler: [idempotency.before], onSend: [idempotency.after] },
     async (request, reply) => {
       const parsed = ResetPasswordBodySchema.safeParse(request.body);
       if (!parsed.success) {
