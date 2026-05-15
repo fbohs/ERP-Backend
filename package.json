@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "node --env-file-if-exists=.env.local --import tsx/esm --watch src/main.ts",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "db:migrate": "node --env-file-if-exists=.env.local node_modules/prisma/build/index.js migrate dev",
     "db:migrate:deploy": "node --env-file-if-exists=.env.local node_modules/prisma/build/index.js migrate deploy",
