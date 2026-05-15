@@ -20,14 +20,17 @@ interface AuthPluginOptions {
   redis: Redis;
   // Durable (AOF-persisted) Redis — backs the Idempotency-Key store.
   queueRedis: Redis;
-  redisUrl?: string;
+  // Queue Redis URL for the password-reset email queue, or null when email
+  // is disabled (no RESEND_API_KEY) — in which case no queue is created.
+  emailQueueUrl: string | null;
   appBaseUrl: string;
 }
 
 export const authPlugin: FastifyPluginAsync<AuthPluginOptions> = async (app, opts) => {
   const repo = new AuthRepository(opts.db);
   const auditRepo = new AuditRepository(opts.db);
-  const emailQueue = opts.redisUrl ? createPasswordResetEmailQueue(opts.redisUrl) : null;
+  const emailQueue =
+    opts.emailQueueUrl !== null ? createPasswordResetEmailQueue(opts.emailQueueUrl) : null;
   const service = new AuthService(repo, auditRepo, opts.redis, opts.db, emailQueue, opts.appBaseUrl);
   const authenticate = createAuthenticate(opts.db, opts.redis);
   const idempotency = createIdempotency(opts.queueRedis);

@@ -25,9 +25,16 @@ export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstanc
   // Cast needed: Fastify infers a wider Logger type from loggerInstance
   const app = Fastify({ loggerInstance: logger }) as unknown as FastifyInstance;
 
-  const emailWorker = config.resendApiKey
+  // Email is a single feature: the queue and its worker are created together
+  // or not at all. With it off, password-reset emails are simply not sent —
+  // never enqueued to pile up unconsumed.
+  const emailEnabled = config.resendApiKey !== '';
+  const emailWorker = emailEnabled
     ? startEmailWorker(queueRedisUrl, config.resendApiKey)
     : null;
+  if (!emailEnabled) {
+    logger.warn('RESEND_API_KEY not set — password reset emails are disabled');
+  }
 
   app.addHook('onClose', async () => {
     await emailWorker?.close();
@@ -43,7 +50,7 @@ export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstanc
     db,
     redis,
     queueRedis,
-    redisUrl: queueRedisUrl,
+    emailQueueUrl: emailEnabled ? queueRedisUrl : null,
     appBaseUrl: config.appBaseUrl,
   });
 
