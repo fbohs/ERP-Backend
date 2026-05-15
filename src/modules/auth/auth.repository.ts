@@ -95,6 +95,14 @@ export class AuthRepository {
       .execute();
   }
 
+  async deleteUnusedPasswordResetTokens(userId: string): Promise<void> {
+    await this.exec
+      .deleteFrom('PasswordResetToken')
+      .where('PasswordResetToken.userId', '=', userId)
+      .where('PasswordResetToken.usedAt', 'is', null)
+      .execute();
+  }
+
   async getUserSessionTokens(userId: string): Promise<string[]> {
     const rows = await this.exec
       .selectFrom('Session')

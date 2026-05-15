@@ -111,7 +111,10 @@ export class AuthService {
       if (account === null) {
         return;
       }
-      await this.repo.withTx(tx).createPasswordResetToken(account.id, token, expiresAt);
+      const txRepo = this.repo.withTx(tx);
+      // Supersede any earlier unused tokens — only the newest link stays live.
+      await txRepo.deleteUnusedPasswordResetTokens(account.id);
+      await txRepo.createPasswordResetToken(account.id, token, expiresAt);
       await this.audit.withTx(tx).record({
         tenantId: account.tenantId,
         actorId: account.id,

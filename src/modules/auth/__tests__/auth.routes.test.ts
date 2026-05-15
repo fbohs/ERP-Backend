@@ -246,6 +246,27 @@ describe('auth routes', () => {
       });
       expect(res.statusCode).toBe(422);
     });
+
+    it('invalidates prior unused reset tokens when a new one is issued', async () => {
+      await app.inject({
+        method: 'POST',
+        url: '/auth/forgot-password',
+        payload: { email: 'admin@acme.com' },
+      });
+      await app.inject({
+        method: 'POST',
+        url: '/auth/forgot-password',
+        payload: { email: 'admin@acme.com' },
+      });
+
+      const unused = await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "PasswordResetToken" prt
+         JOIN "User" u ON u.id = prt."userId"
+         WHERE u.email = 'admin@acme.com' AND prt."usedAt" IS NULL`,
+      );
+      // only the most recently issued token remains live
+      expect(unused.rows[0]!.n).toBe(1);
+    });
   });
 
   describe('POST /auth/reset-password', () => {
@@ -362,9 +383,8 @@ describe('auth routes', () => {
     const adminTokenCount = `SELECT count(*)::int AS n FROM "PasswordResetToken" prt
        JOIN "User" u ON u.id = prt."userId" WHERE u.email = 'admin@acme.com'`;
 
-    it('replays the stored response and applies the side effect only once', async () => {
+    it('replays the stored response without re-running the handler', async () => {
       const idemKey = crypto.randomBytes(16).toString('hex');
-      const before = await pool.query<{ n: number }>(adminTokenCount);
 
       const first = await app.inject({
         method: 'POST',
@@ -372,18 +392,20 @@ describe('auth routes', () => {
         headers: { 'idempotency-key': idemKey },
         payload: { email: 'admin@acme.com' },
       });
+      const afterFirst = await pool.query<{ n: number }>(adminTokenCount);
+
       const second = await app.inject({
         method: 'POST',
         url: '/auth/forgot-password',
         headers: { 'idempotency-key': idemKey },
         payload: { email: 'admin@acme.com' },
       });
+      const afterSecond = await pool.query<{ n: number }>(adminTokenCount);
 
       expect(first.statusCode).toBe(200);
       expect(second.statusCode).toBe(200);
-
-      const after = await pool.query<{ n: number }>(adminTokenCount);
-      expect(after.rows[0]!.n).toBe(before.rows[0]!.n + 1);
+      // the replayed call must not touch the database at all
+      expect(afterSecond.rows[0]!.n).toBe(afterFirst.rows[0]!.n);
     });
 
     it('replays the same login response without creating a second session', async () => {
