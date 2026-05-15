@@ -136,8 +136,8 @@ Every protected endpoint declares which permissions are required. The system che
 - If delivery fails after 3 attempts, the job is recorded as failed. The user can request another reset link.
 
 **Duplicate requests:**
-- If a user submits forgot-password twice before receiving the email, both requests create separate tokens. Each link is valid independently.
-- However, only one job is enqueued per token (deterministic job ID). If the same request is submitted twice in rapid succession before the first job is processed, the second submission does not create a duplicate email.
+- If a user submits forgot-password again before using the first link, the new request deletes all prior unused tokens for that user (`deleteUnusedPasswordResetTokens` in `auth.repository.ts`) and issues a single new token. Only the most-recently issued link is valid — this is the **single-live** guarantee described in ADR 0001.
+- Only one job is enqueued per token (deterministic job ID). If the same request is submitted twice in rapid succession before the first job is processed, the second submission does not create a duplicate email.
 
 **Edge cases:**
 
@@ -147,7 +147,7 @@ Every protected endpoint declares which permissions are required. The system che
 | User account deactivated | `200 OK` (no email sent) |
 | Tenant account suspended | `200 OK` (no email sent) |
 | Invalid email format (e.g. "notanemail") | `422 Unprocessable Entity` |
-| Multiple requests before first link is used | Each creates a valid, independent token |
+| Multiple requests before first link is used | New request supersedes previous unused tokens — only the newest link is valid (`deleteUnusedPasswordResetTokens` + `createPasswordResetToken` in `auth.repository.ts`) |
 
 ---
 
