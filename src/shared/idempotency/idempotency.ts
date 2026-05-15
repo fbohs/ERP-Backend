@@ -2,6 +2,7 @@ import * as crypto from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { Redis } from '../cache/redis.js';
 import { ConflictError, ValidationError } from '../errors/base.js';
+import { logger } from '../logging/index.js';
 
 const TTL_SECONDS = 24 * 60 * 60;
 const MAX_KEY_LENGTH = 255;
@@ -68,7 +69,15 @@ export function createIdempotency(redis: Redis): Idempotency {
       throw new ConflictError('A request with this Idempotency-Key is already in progress');
     }
 
-    const response = JSON.parse(stored) as StoredResponse;
+    let response: StoredResponse;
+    try {
+      response = JSON.parse(stored) as StoredResponse;
+    } catch {
+      logger.error({ key }, 'idempotency: corrupt cache entry, clearing and reprocessing');
+      await redis.del(key);
+      request.idempotencyKey = key;
+      return undefined;
+    }
     if (response.fingerprint !== fp) {
       throw new ConflictError('Idempotency-Key was already used for a different request');
     }
