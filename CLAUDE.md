@@ -42,14 +42,13 @@ src/
 docs/
   engineering-charter.md → long-form spec (read when needed)
   adr/                → architecture decisions
-learnings/            → shared engineering notes — technical references & feature write-ups (safe to read)
+learnings/            → owner's personal reference only — DO NOT read or process
 prisma/               → schema + migrations
-project-learnings/    → owner's personal reference only — DO NOT read or process
 ```
 
-## project-learnings/
+## learnings/
 
-This folder contains markdown files written as the owner's personal quick-reference notes. They are **not inputs for Claude**. Do not read, reference, or process any file in `project-learnings/` unless the owner explicitly asks you to look at a specific file for a specific reason.
+This folder contains markdown files written as the owner's personal quick-reference notes. They are **not inputs for Claude**. Do not read, reference, or process any file in `learnings/` unless the owner explicitly asks you to look at a specific file for a specific reason. Code comments and commit messages may link to files inside it as breadcrumbs for human readers — those links are not an invitation to open the targets.
 
 ## Always-On Hard Rules
 
