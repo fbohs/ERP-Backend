@@ -25,7 +25,6 @@
 
 datasource db {
     provider = "postgresql"
-    url      = env("DATABASE_URL")
 }
 
 generator client {
@@ -200,9 +199,10 @@ model User {
     role     UserRole @default(VIEWER)
     isActive Boolean  @default(true)
 
-    createdAt DateTime  @default(now())
-    updatedAt DateTime  @default(now()) @updatedAt
-    sessions  Session[]
+    createdAt           DateTime             @default(now())
+    updatedAt           DateTime             @default(now()) @updatedAt
+    sessions            Session[]
+    passwordResetTokens PasswordResetToken[]
 
     tenant Tenant @relation(fields: [tenantId], references: [id])
 
@@ -221,6 +221,41 @@ model Session {
 
     @@index([userId])
     @@index([expiresAt])
+}
+
+model PasswordResetToken {
+    id        BigInt    @id @default(autoincrement())
+    token     String    @unique
+    userId    BigInt
+    expiresAt DateTime
+    usedAt    DateTime?
+    createdAt DateTime  @default(now())
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@index([userId])
+    @@index([expiresAt])
+}
+
+// Append-only audit ledger (charter §8). Written in the SAME transaction as
+// the operation it records, so the audit row commits iff the operation does.
+// Immutable: never updated, never deleted in normal operation. FK constraints
+// omitted like every other table — relations enforced at the app boundary.
+model AuditLog {
+    id         BigInt   @id @default(autoincrement())
+    tenantId   BigInt
+    actorId    BigInt? // null for system-originated actions
+    entityType String
+    entityId   String
+    action     String
+    before     Json? // entity state before the change, when applicable
+    after      Json? // entity state after the change, when applicable
+    requestId  String? // Fastify request id; null for non-HTTP actions
+    occurredAt DateTime @default(now())
+
+    @@index([tenantId, occurredAt])
+    @@index([tenantId, entityType, entityId])
+    @@index([tenantId, actorId])
 }
 
 // Per-tenant document numbering. Unique on (tenantId, code) so each tenant

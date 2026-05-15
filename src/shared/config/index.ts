@@ -10,6 +10,11 @@ export const config = {
   logLevel: rawLogLevel ?? 'info',
   databaseUrl: process.env['DATABASE_URL'] ?? '',
   redisUrl: process.env['REDIS_URL'] ?? '',
+  queueRedisUrl: process.env['QUEUE_REDIS_URL'] ?? '',
+  resendApiKey: process.env['RESEND_API_KEY'] ?? '',
+  appBaseUrl: process.env['APP_BASE_URL'] ?? 'http://localhost:3000',
+  sessionTtlSeconds: 28_800,         // 8 hours, absolute expiry
+  passwordResetTtlSeconds: 1_800,    // 30 minutes
   get isProduction() {
     return this.nodeEnv === 'production';
   },

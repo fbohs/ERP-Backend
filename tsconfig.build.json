@@ -1,0 +1,7 @@
+{
+  // Production build config. Identical to tsconfig.json but excludes test
+  // files so dist/ never ships Testcontainers/Supertest code. tsconfig.json
+  // stays the IDE + ESLint config and still sees the tests.
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "dist", "**/__tests__/**"]
+}
