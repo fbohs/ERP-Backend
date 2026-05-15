@@ -19,6 +19,13 @@ const AUDIT_ACTION = {
   passwordResetCompleted: 'auth.password_reset_completed',
 } as const;
 
+// Precomputed argon2id hash of a random string. Verifying a submitted password
+// against this when no user is found makes login spend the same CPU whether or
+// not the email exists — closing the timing side channel that would otherwise
+// enumerate accounts. See learnings/technical/auth-timing-attacks.md.
+const DECOY_PASSWORD_HASH =
+  '$argon2id$v=19$m=65536,t=3,p=4$2WDaBB7J5t5ksnwhjppy5w$L0OFJvyc3SC1oGerlju26ekiICO5D+VmbLcsizaFMsY';
+
 export interface SessionActor {
   userId: string;
   tenantId: string;
@@ -37,12 +44,14 @@ export class AuthService {
   async login(email: string, password: string, requestId: string) {
     const user = await this.repo.findUserByEmail(email);
 
-    if (!user || !user.isActive || !user.tenantIsActive) {
-      throw new UnauthorizedError('Invalid credentials');
-    }
+    // Verify unconditionally — against the decoy hash when the email has no
+    // account — so the work done is identical whether or not the user exists.
+    const passwordMatches = await argon2.verify(
+      user?.password ?? DECOY_PASSWORD_HASH,
+      password,
+    );
 
-    const valid = await argon2.verify(user.password, password);
-    if (!valid) {
+    if (!user || !user.isActive || !user.tenantIsActive || !passwordMatches) {
       throw new UnauthorizedError('Invalid credentials');
     }
 
@@ -89,32 +98,35 @@ export class AuthService {
 
   async forgotPassword(email: string, requestId: string): Promise<void> {
     const user = await this.repo.findUserByEmail(email);
-
-    // Return silently regardless — never reveal whether the email exists
-    if (!user || !user.isActive || !user.tenantIsActive) {
-      return;
-    }
+    // Never reveal whether the email exists — not via the response (always
+    // 200) and not via timing. The token and a transaction are produced
+    // unconditionally so an unknown email costs the same as a known one.
+    const account =
+      user !== undefined && user.isActive && user.tenantIsActive ? user : null;
 
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + config.passwordResetTtlSeconds * 1_000);
 
     await this.db.transaction().execute(async (tx) => {
-      await this.repo.withTx(tx).createPasswordResetToken(user.id, token, expiresAt);
+      if (account === null) {
+        return;
+      }
+      await this.repo.withTx(tx).createPasswordResetToken(account.id, token, expiresAt);
       await this.audit.withTx(tx).record({
-        tenantId: user.tenantId,
-        actorId: user.id,
+        tenantId: account.tenantId,
+        actorId: account.id,
         entityType: 'User',
-        entityId: user.id,
+        entityId: account.id,
         action: AUDIT_ACTION.passwordResetRequested,
         requestId,
       });
     });
 
-    if (this.emailQueue) {
+    if (account !== null && this.emailQueue) {
       const resetUrl = `${this.appBaseUrl}/reset-password?token=${token}`;
       await enqueuePasswordResetEmail(this.emailQueue, token, {
-        email: user.email,
-        name: user.name,
+        email: account.email,
+        name: account.name,
         resetUrl,
       });
     }
