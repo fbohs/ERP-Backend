@@ -39,8 +39,8 @@ export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstanc
   app.addHook('onClose', async () => {
     await emailWorker?.close();
     await db.destroy();
-    redis.disconnect();
-    queueRedis.disconnect();
+    await redis.quit();
+    await queueRedis.quit();
   });
 
   registerErrorHandler(app);
