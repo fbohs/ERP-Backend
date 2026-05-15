@@ -8,19 +8,33 @@ import {
   type PasswordResetEmailQueue,
 } from './jobs/send-password-reset-email.js';
 import type { AuthRepository } from './auth.repository.js';
+import type { AuditRepository } from '../../shared/audit/index.js';
 import type { AppDb } from '../../shared/db/index.js';
 import type { Redis } from '../../shared/cache/redis.js';
+
+const AUDIT_ACTION = {
+  login: 'auth.login',
+  logout: 'auth.logout',
+  passwordResetRequested: 'auth.password_reset_requested',
+  passwordResetCompleted: 'auth.password_reset_completed',
+} as const;
+
+export interface SessionActor {
+  userId: string;
+  tenantId: string;
+}
 
 export class AuthService {
   constructor(
     private readonly repo: AuthRepository,
+    private readonly audit: AuditRepository,
     private readonly redis: Redis,
     private readonly db: AppDb,
     private readonly emailQueue: PasswordResetEmailQueue | null,
     private readonly appBaseUrl: string,
   ) {}
 
-  async login(email: string, password: string) {
+  async login(email: string, password: string, requestId: string) {
     const user = await this.repo.findUserByEmail(email);
 
     if (!user || !user.isActive || !user.tenantIsActive) {
@@ -35,7 +49,17 @@ export class AuthService {
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + config.sessionTtlSeconds * 1_000);
 
-    await this.repo.createSession(user.id, token, expiresAt);
+    await this.db.transaction().execute(async (tx) => {
+      await this.repo.withTx(tx).createSession(user.id, token, expiresAt);
+      await this.audit.withTx(tx).record({
+        tenantId: user.tenantId,
+        actorId: user.id,
+        entityType: 'User',
+        entityId: user.id,
+        action: AUDIT_ACTION.login,
+        requestId,
+      });
+    });
 
     const cached: CachedSession = { userId: user.id, tenantId: user.tenantId, role: user.role };
     await this.redis.setex(sessionCacheKey(token), config.sessionTtlSeconds, JSON.stringify(cached));
@@ -47,14 +71,23 @@ export class AuthService {
     };
   }
 
-  async logout(token: string): Promise<void> {
-    await Promise.all([
-      this.repo.deleteSession(token),
-      this.redis.del(sessionCacheKey(token)),
-    ]);
+  async logout(token: string, actor: SessionActor, requestId: string): Promise<void> {
+    await this.db.transaction().execute(async (tx) => {
+      await this.repo.withTx(tx).deleteSession(token);
+      await this.audit.withTx(tx).record({
+        tenantId: actor.tenantId,
+        actorId: actor.userId,
+        entityType: 'User',
+        entityId: actor.userId,
+        action: AUDIT_ACTION.logout,
+        requestId,
+      });
+    });
+
+    await this.redis.del(sessionCacheKey(token));
   }
 
-  async forgotPassword(email: string): Promise<void> {
+  async forgotPassword(email: string, requestId: string): Promise<void> {
     const user = await this.repo.findUserByEmail(email);
 
     // Return silently regardless — never reveal whether the email exists
@@ -65,7 +98,17 @@ export class AuthService {
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + config.passwordResetTtlSeconds * 1_000);
 
-    await this.repo.createPasswordResetToken(user.id, token, expiresAt);
+    await this.db.transaction().execute(async (tx) => {
+      await this.repo.withTx(tx).createPasswordResetToken(user.id, token, expiresAt);
+      await this.audit.withTx(tx).record({
+        tenantId: user.tenantId,
+        actorId: user.id,
+        entityType: 'User',
+        entityId: user.id,
+        action: AUDIT_ACTION.passwordResetRequested,
+        requestId,
+      });
+    });
 
     if (this.emailQueue) {
       const resetUrl = `${this.appBaseUrl}/reset-password?token=${token}`;
@@ -77,7 +120,7 @@ export class AuthService {
     }
   }
 
-  async resetPassword(token: string, newPassword: string): Promise<void> {
+  async resetPassword(token: string, newPassword: string, requestId: string): Promise<void> {
     const record = await this.repo.findPasswordResetToken(token);
 
     if (!record) {
@@ -105,6 +148,14 @@ export class AuthService {
       await txRepo.updateUserPassword(record.userId, passwordHash);
       await txRepo.markTokenUsed(token);
       await txRepo.deleteUserSessions(record.userId);
+      await this.audit.withTx(tx).record({
+        tenantId: record.tenantId,
+        actorId: record.userId,
+        entityType: 'User',
+        entityId: record.userId,
+        action: AUDIT_ACTION.passwordResetCompleted,
+        requestId,
+      });
     });
 
     if (sessionTokens.length > 0) {

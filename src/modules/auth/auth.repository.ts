@@ -79,6 +79,7 @@ export class AuthRepository {
         'PasswordResetToken.userId',
         'PasswordResetToken.expiresAt',
         'PasswordResetToken.usedAt',
+        'User.tenantId',
         'User.email',
         'User.name',
       ])

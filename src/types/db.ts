@@ -148,6 +148,18 @@ export type Address = {
     createdAt: Generated<Timestamp>;
     updatedAt: Generated<Timestamp>;
 };
+export type AuditLog = {
+    id: Generated<string>;
+    tenantId: string;
+    actorId: string | null;
+    entityType: string;
+    entityId: string;
+    action: string;
+    before: unknown | null;
+    after: unknown | null;
+    requestId: string | null;
+    occurredAt: Generated<Timestamp>;
+};
 export type BinLocation = {
     id: Generated<string>;
     tenantId: string;
@@ -658,6 +670,7 @@ export type Warehouse = {
 };
 export type DB = {
     Address: Address;
+    AuditLog: AuditLog;
     BinLocation: BinLocation;
     Brand: Brand;
     Category: Category;

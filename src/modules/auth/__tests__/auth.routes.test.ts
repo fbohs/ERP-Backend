@@ -97,15 +97,42 @@ describe('auth routes', () => {
       expect(body.tenant.slug).toBe('acme');
 
       sessionToken = body.token;
+
+      const audit = await pool.query<{
+        entityType: string;
+        tenantId: string;
+        actorId: string;
+        requestId: string | null;
+      }>(
+        `SELECT al."entityType", al."tenantId", al."actorId", al."requestId"
+         FROM "AuditLog" al
+         JOIN "User" u ON u.id = al."actorId"
+         WHERE u.email = 'admin@acme.com' AND al.action = 'auth.login'
+         ORDER BY al.id DESC LIMIT 1`,
+      );
+      expect(audit.rows.length).toBe(1);
+      expect(audit.rows[0]!.entityType).toBe('User');
+      expect(audit.rows[0]!.tenantId).not.toBeNull();
+      expect(audit.rows[0]!.actorId).not.toBeNull();
+      expect(audit.rows[0]!.requestId).not.toBeNull();
     });
 
     it('returns 401 on wrong password', async () => {
+      const before = await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "AuditLog" WHERE action = 'auth.login'`,
+      );
       const res = await app.inject({
         method: 'POST',
         url: '/auth/login',
         payload: { email: 'admin@acme.com', password: 'wrong-password' },
       });
       expect(res.statusCode).toBe(401);
+
+      // a rejected login must not leave an audit row behind
+      const after = await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "AuditLog" WHERE action = 'auth.login'`,
+      );
+      expect(after.rows[0]!.n).toBe(before.rows[0]!.n);
     });
 
     it('returns 401 on unknown email', async () => {
@@ -149,6 +176,17 @@ describe('auth routes', () => {
         headers: { authorization: `Bearer ${sessionToken}` },
       });
       expect(res.statusCode).toBe(204);
+
+      const audit = await pool.query<{ entityType: string; requestId: string | null }>(
+        `SELECT al."entityType", al."requestId"
+         FROM "AuditLog" al
+         JOIN "User" u ON u.id = al."actorId"
+         WHERE u.email = 'admin@acme.com' AND al.action = 'auth.logout'
+         ORDER BY al.id DESC LIMIT 1`,
+      );
+      expect(audit.rows.length).toBe(1);
+      expect(audit.rows[0]!.entityType).toBe('User');
+      expect(audit.rows[0]!.requestId).not.toBeNull();
     });
 
     it('returns 401 after logout with the same token', async () => {
@@ -178,6 +216,17 @@ describe('auth routes', () => {
       );
       expect(result.rows.length).toBe(1);
       expect(result.rows[0]!.token.length).toBeGreaterThan(0);
+
+      const audit = await pool.query<{ entityType: string; requestId: string | null }>(
+        `SELECT al."entityType", al."requestId"
+         FROM "AuditLog" al
+         JOIN "User" u ON u.id = al."actorId"
+         WHERE u.email = 'admin@acme.com' AND al.action = 'auth.password_reset_requested'
+         ORDER BY al.id DESC LIMIT 1`,
+      );
+      expect(audit.rows.length).toBe(1);
+      expect(audit.rows[0]!.entityType).toBe('User');
+      expect(audit.rows[0]!.requestId).not.toBeNull();
     });
 
     it('returns 200 when email does not exist (no enumeration)', async () => {
@@ -243,6 +292,17 @@ describe('auth routes', () => {
         payload: { token: validToken, newPassword: 'reset-new-password-456' },
       });
       expect(res.statusCode).toBe(200);
+
+      const audit = await pool.query<{ entityType: string; requestId: string | null }>(
+        `SELECT al."entityType", al."requestId"
+         FROM "AuditLog" al
+         JOIN "User" u ON u.id = al."actorId"
+         WHERE u.email = 'reset@acme.com' AND al.action = 'auth.password_reset_completed'
+         ORDER BY al.id DESC LIMIT 1`,
+      );
+      expect(audit.rows.length).toBe(1);
+      expect(audit.rows[0]!.entityType).toBe('User');
+      expect(audit.rows[0]!.requestId).not.toBeNull();
 
       // pre-reset session must now be rejected
       const oldSessionRes = await app.inject({

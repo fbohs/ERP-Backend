@@ -237,6 +237,27 @@ model PasswordResetToken {
     @@index([expiresAt])
 }
 
+// Append-only audit ledger (charter §8). Written in the SAME transaction as
+// the operation it records, so the audit row commits iff the operation does.
+// Immutable: never updated, never deleted in normal operation. FK constraints
+// omitted like every other table — relations enforced at the app boundary.
+model AuditLog {
+    id         BigInt   @id @default(autoincrement())
+    tenantId   BigInt
+    actorId    BigInt? // null for system-originated actions
+    entityType String
+    entityId   String
+    action     String
+    before     Json? // entity state before the change, when applicable
+    after      Json? // entity state after the change, when applicable
+    requestId  String? // Fastify request id; null for non-HTTP actions
+    occurredAt DateTime @default(now())
+
+    @@index([tenantId, occurredAt])
+    @@index([tenantId, entityType, entityId])
+    @@index([tenantId, actorId])
+}
+
 // Per-tenant document numbering. Unique on (tenantId, code) so each tenant
 // gets independent sequences starting from 00001.
 model DocumentSequence {
