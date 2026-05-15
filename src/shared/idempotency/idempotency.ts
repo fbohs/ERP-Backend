@@ -14,8 +14,8 @@ interface StoredResponse {
   fingerprint: string;
 }
 
-function storageKey(route: string, idempotencyKey: string): string {
-  return `idem:${route}:${idempotencyKey}`;
+function storageKey(method: string, route: string, idempotencyKey: string): string {
+  return `idem:${method}:${route}:${idempotencyKey}`;
 }
 
 // Ties a stored response to the exact request that produced it. Two callers
@@ -51,7 +51,7 @@ export function createIdempotency(redis: Redis): Idempotency {
       );
     }
 
-    const key = storageKey(request.routeOptions.url ?? request.url, header);
+    const key = storageKey(request.method, request.routeOptions.url ?? request.url, header);
     const fp = fingerprint(request);
 
     // Atomically claim the key. 'OK' means this is the first request for it.
