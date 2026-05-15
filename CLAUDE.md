@@ -91,10 +91,17 @@ These apply everywhere. Violating any of them blocks a PR.
 - Writing a query → `.claude/skills/tenant-scoped-query/SKILL.md`.
 - Need depth on something (SOLID specifics, error hierarchy, observability, caching strategy, performance budgets, security) → `docs/engineering-charter.md`.
 
-## Commit Messages
+## Git
 
-- Write commit messages as plain engineering summaries.
-- **No `Co-Authored-By` trailers**, no AI attribution, no mention of Claude or any assistant tool — ever.
+Invoke `.claude/skills/git/SKILL.md` before any git operation — commit, push, rebase, amend, PR, recovery.
+
+**Unconditional rules (apply even without invoking the skill):**
+
+- **No `Co-Authored-By` trailers**, no AI attribution, no mention of Claude or any assistant tool — ever. Enforced by `.claude/hooks/block-ai-attribution.sh`; commits containing such trailers will be rejected before they land.
+- **Commit or push only when the user explicitly asks.** Never on your own initiative.
+- **If on the default branch (`production`), branch first** and get the new branch name confirmed before any state-mutating work.
+
+Everything else — message style, granularity, splitting a dirty tree, rebases, push safety, PR bodies, recovery — see the git skill.
 
 ## Interaction Protocol
 
