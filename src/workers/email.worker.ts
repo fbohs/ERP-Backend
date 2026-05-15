@@ -34,6 +34,8 @@ export function createEmailWorker(queueRedisUrl: string, resend: Resend): Worker
       connection: {
         host: url.hostname,
         port: Number(url.port) || 6379,
+        ...(url.password ? { password: url.password } : {}),
+        ...(url.username ? { username: url.username } : {}),
       },
       concurrency: 5,
     },
