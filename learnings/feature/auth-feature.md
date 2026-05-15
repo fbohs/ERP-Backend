@@ -187,17 +187,76 @@ All `Session` rows for the user are deleted from the database. Redis cache entri
 
 ---
 
-## What Is Not in Scope (This Sprint)
+### 6. Audit Logging
+
+**User story:** As a compliance officer, I want every critical action in the system to be recorded with who did it and when, so that I have a tamper-evident trail for audits and investigations.
+
+**Status:** Implemented for all auth actions. Every state-changing auth operation writes an audit row in the same database transaction as the change (hard rule #7).
+
+**Covered actions (auth):**
+
+| Action constant | Triggered by |
+|---|---|
+| `auth.login` | Successful login |
+| `auth.logout` | Logout |
+| `auth.password_reset_requested` | Forgot-password submission (when account found) |
+| `auth.password_reset_completed` | Successful password reset |
+
+**Design:** The `AuditRepository` is injected into each service. Writes use `withTx(tx)` so the audit row and the business change commit atomically — a failed business operation produces no orphaned audit row, and a failed audit write rolls back the business change.
+
+**Scope extension:** every other module (accounting, inventory, purchasing, …) will write audit rows for its own critical actions as it is built.
+
+---
+
+### 7. Rate Limiting
+
+**User story:** As a platform operator, I want auth endpoints rate-limited so that password spraying, reset-email flooding, and reset-token brute force are mitigated at the API layer.
+
+**Status:** Not yet implemented. Planned for this scope.
+
+**Endpoints that require limiting:**
+
+| Endpoint | Threat without limiting |
+|---|---|
+| `POST /auth/login` | Password spraying, credential stuffing |
+| `POST /auth/forgot-password` | Reset-email flooding of a victim's inbox, account enumeration via timing |
+| `POST /auth/reset-password` | Brute force against reset tokens |
+
+**Design intent:** Redis-backed, implemented once as shared infrastructure under `src/shared/` and applied across endpoint families — not added per-endpoint, ad hoc, inside feature branches. `Retry-After` headers required. Bypass rules for internal traffic.
+
+**Note:** ADR 0001 previously deferred this to a follow-up branch. That decision is superseded — rate limiting is now in scope for `feature/auth_flow`. ADR 0001 should be updated or superseded when the implementation lands.
+
+---
+
+### 8. Active Session List
+
+**User story:** As a user, I want to see all devices where I am currently logged in, and be able to revoke any session, so that I can recover if a device is stolen or a session is compromised.
+
+**Status:** Not yet implemented. Planned for this scope. The underlying `Session` table already exists with per-row data; a read endpoint and a targeted-revocation endpoint are needed.
+
+**Planned endpoints:**
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/auth/sessions` | List all active sessions for the authenticated user |
+| DELETE | `/auth/sessions/:sessionId` | Revoke a specific session by ID |
+
+---
+
+### 9. Multi-Factor Authentication
+
+**User story:** As a user, I want to require a second factor on login so that a stolen password alone is not sufficient to access my account.
+
+**Status:** Not yet implemented. Planned for this scope. Delivery method (TOTP app vs SMS) and enrollment flow require a design decision before implementation begins.
+
+---
+
+## What Is Not in Scope
 
 | Feature | Notes |
 |---|---|
 | Admin-initiated password reset | Admin submits another user's ID and a reset email is sent to that user. Reuses the same token infrastructure. Planned. |
-| Multi-factor authentication | Requires decision on delivery method (TOTP app vs SMS). Needs ADR. |
 | "Remember me" (extended session) | 8h is fixed. A "keep me logged in" option would grant 30-day sessions, revocable per device. Not implemented. |
-| Active session list | Users cannot see or manage their own active sessions. The data exists (Session table); a UI endpoint is needed. |
-| Rate limiting on forgot-password | Without it, the endpoint can be used to exhaust email quota by submitting valid emails in bulk. Redis-backed rate limiting is the right solution (Redis is already in stack). Not implemented yet. |
-| Account lockout after failed logins | No brute-force protection on the login endpoint. Rate limiting at the infrastructure level (API gateway / reverse proxy) is assumed. |
-| Audit logging | State-changing operations (login, logout, password reset) do not write to a dedicated audit table yet. Planned as a cross-cutting concern. |
 | OAuth / SSO | Not in scope. Would require an ADR. |
 
 ---
@@ -253,3 +312,25 @@ All `Session` rows for the user are deleted from the database. Redis cache entri
 - [ ] Unknown token returns `401`.
 - [ ] Missing fields return `422`.
 - [ ] Token is marked `usedAt` after use and cannot be reused even if not yet expired.
+
+### Audit Logging
+- [ ] Successful login writes an audit row with actor, tenant, and timestamp in the same transaction.
+- [ ] Logout writes an audit row in the same transaction.
+- [ ] Forgot-password submission (when account found) writes an audit row.
+- [ ] Successful password reset writes an audit row.
+- [ ] A rolled-back business transaction produces no audit row.
+
+### Rate Limiting
+- [ ] `POST /auth/login` returns `429 Too Many Requests` after the configured threshold; response includes a `Retry-After` header.
+- [ ] `POST /auth/forgot-password` returns `429` after threshold; response includes `Retry-After`.
+- [ ] `POST /auth/reset-password` returns `429` after threshold; response includes `Retry-After`.
+- [ ] Limits are enforced per-IP (or per-tenant, per design decision).
+- [ ] Limits reset after the configured window expires.
+
+### Active Session List
+- [ ] `GET /auth/sessions` returns all active sessions for the authenticated user.
+- [ ] `DELETE /auth/sessions/:sessionId` revokes the specified session; subsequent requests with that token return `401`.
+- [ ] A user cannot revoke another user's session.
+
+### Multi-Factor Authentication
+- [ ] Acceptance criteria to be defined when the delivery method and enrollment flow are decided.
