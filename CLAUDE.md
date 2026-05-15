@@ -42,6 +42,7 @@ src/
 docs/
   engineering-charter.md → long-form spec (read when needed)
   adr/                → architecture decisions
+learnings/            → shared engineering notes — technical references & feature write-ups (safe to read)
 prisma/               → schema + migrations
 project-learnings/    → owner's personal reference only — DO NOT read or process
 ```
