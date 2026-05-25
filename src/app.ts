@@ -3,15 +3,19 @@ import { logger } from './shared/logging/index.js';
 import { registerErrorHandler } from './shared/errors/handler.js';
 import { healthPlugin } from './modules/health/index.js';
 import { authPlugin } from './modules/auth/index.js';
+import { platformPlugin } from './modules/platform/index.js';
 import { createDb } from './shared/db/index.js';
 import { createRedis } from './shared/cache/redis.js';
-import { startEmailWorker } from './workers/email.worker.js';
+import { startEmailWorkers } from './workers/email.worker.js';
 import { config } from './shared/config/index.js';
 
 export interface AppOverrides {
   databaseUrl?: string;
   redisUrl?: string;
   queueRedisUrl?: string;
+  // Comma-separated IPv4/IPv6 addresses and IPv4 CIDR ranges allowed to reach
+  // the /platform/* surface. Consumed once the platform plugin is wired in.
+  platformIpAllowlist?: string;
 }
 
 export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstance> {
@@ -23,21 +27,22 @@ export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstanc
   const queueRedis = createRedis(queueRedisUrl);
 
   // Cast needed: Fastify infers a wider Logger type from loggerInstance
-  const app = Fastify({ loggerInstance: logger }) as unknown as FastifyInstance;
+  const app = Fastify({
+    loggerInstance: logger,
+    trustProxy: config.trustProxy,
+  }) as unknown as FastifyInstance;
 
-  // Email is a single feature: the queue and its worker are created together
-  // or not at all. With it off, password-reset emails are simply not sent —
-  // never enqueued to pile up unconsumed.
+  // Email is a single feature: the queues and their workers are created together
+  // or not at all. With it off, emails are simply not sent — never enqueued to
+  // pile up unconsumed.
   const emailEnabled = config.resendApiKey !== '';
-  const emailWorker = emailEnabled
-    ? startEmailWorker(queueRedisUrl, config.resendApiKey)
-    : null;
+  const emailWorkers = emailEnabled ? startEmailWorkers(queueRedisUrl, config.resendApiKey) : [];
   if (!emailEnabled) {
-    logger.warn('RESEND_API_KEY not set — password reset emails are disabled');
+    logger.warn('RESEND_API_KEY not set — password reset and platform login emails are disabled');
   }
 
   app.addHook('onClose', async () => {
-    await emailWorker?.close();
+    await Promise.all(emailWorkers.map((worker) => worker.close()));
     await db.destroy();
     await redis.quit();
     await queueRedis.quit();
@@ -52,6 +57,14 @@ export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstanc
     queueRedis,
     emailQueueUrl: emailEnabled ? queueRedisUrl : null,
     appBaseUrl: config.appBaseUrl,
+  });
+  await app.register(platformPlugin, {
+    db,
+    redis,
+    queueRedis,
+    emailQueueUrl: emailEnabled ? queueRedisUrl : null,
+    appBaseUrl: config.appBaseUrl,
+    ipAllowlist: overrides?.platformIpAllowlist ?? config.platformIpAllowlist,
   });
 
   return app;
