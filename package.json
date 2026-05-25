@@ -16,6 +16,8 @@
     "db:codegen": "node --env-file-if-exists=.env.local node_modules/.bin/kysely-codegen --out-file src/types/db.ts",
     "db:studio": "node --env-file-if-exists=.env.local node_modules/prisma/build/index.js studio",
     "platform:create-admin": "node --env-file-if-exists=.env.local --import tsx/esm src/scripts/create-platform-admin.cli.ts",
+    "platform:update-admin": "node --env-file-if-exists=.env.local --import tsx/esm src/scripts/update-platform-admin.cli.ts",
+    "platform:revoke-sessions": "node --env-file-if-exists=.env.local --import tsx/esm src/scripts/revoke-platform-admin-sessions.cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

@@ -52,6 +52,11 @@ describe('createPlatformAdmin', () => {
     );
     expect(rows.rows.length).toBe(1);
     expect(rows.rows[0]!.name).toBe('Founder');
+
+    const audit = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "PlatformAuditLog" WHERE action = 'platform.admin_created'`,
+    );
+    expect(audit.rows[0]!.n).toBe(1);
   });
 
   it('is idempotent on email — a second call creates no duplicate', async () => {
