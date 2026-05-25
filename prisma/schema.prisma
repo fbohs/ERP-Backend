@@ -31,12 +31,6 @@ generator client {
     provider = "prisma-client-js"
 }
 
-generator kysely {
-    provider = "prisma-kysely"
-    output   = "../src/types"
-    fileName = "db.ts"
-}
-
 // ============================================================================
 // ENUMS
 // ============================================================================

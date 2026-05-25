@@ -10,7 +10,7 @@ The terse always-on rules live in the root `CLAUDE.md`. This document explains t
 
 1. [Operating Principles](#operating-principles)
 2. [SOLID — Project-Specific Application](#solid)
-3. [The Prisma + Kysely Contract (Deep Dive)](#prisma-kysely)
+3. [The Prisma + Kysely Contract (Deep Dive)](#kysely-contract)
 4. [Multi-Tenancy](#multi-tenancy)
 5. [Validation](#validation)
 6. [Errors](#errors)
@@ -52,7 +52,7 @@ Generic SOLID slogans are useless. Concretely:
 
 ---
 
-## <a id="prisma-kysely"></a>3. The Prisma + Kysely Contract (Deep Dive)
+## <a id="kysely-contract"></a>3. The Prisma + Kysely Contract (Deep Dive)
 
 The terse version lives in `src/shared/db/CLAUDE.md`. Here are the things that don't fit there.
 
