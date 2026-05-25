@@ -51,6 +51,14 @@ enum UserRole {
     VIEWER
 }
 
+// Disambiguates AuditLog.actorId, which is a bare BigInt drawn from one of two
+// separate id-spaces: tenant Users and PlatformAdmins. Without this, a platform
+// admin id and a user id are indistinguishable. See ADR 0002.
+enum ActorType {
+    USER
+    PLATFORM_ADMIN
+}
+
 enum PartyType {
     INDIVIDUAL
     BUSINESS
@@ -237,14 +245,65 @@ model PasswordResetToken {
     @@index([expiresAt])
 }
 
+// Platform operator (superadmin). Cross-tenant by nature, so it carries NO
+// tenantId — and NO password: it authenticates passwordlessly via a single-use
+// emailed magic link (PlatformAdminLoginToken). Modeled entirely separately
+// from tenant Users so the "every business query is tenant-scoped" P0 invariant
+// stays structurally true. See ADR 0002.
+model PlatformAdmin {
+    id       BigInt @id @default(autoincrement())
+    publicId String @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+
+    email    String  @unique
+    name     String
+    isActive Boolean @default(true)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @default(now()) @updatedAt
+
+    sessions    PlatformAdminSession[]
+    loginTokens PlatformAdminLoginToken[]
+}
+
+model PlatformAdminSession {
+    id        BigInt   @id @default(autoincrement())
+    token     String   @unique
+    adminId   BigInt
+    expiresAt DateTime
+    createdAt DateTime @default(now())
+
+    admin PlatformAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+    @@index([adminId])
+    @@index([expiresAt])
+}
+
+// Single-use, single-live, short-TTL magic-link token. Mirrors
+// PasswordResetToken: issuing a new one supersedes the admin's prior unused
+// tokens, and a token is consumed (usedAt set) on successful verification.
+model PlatformAdminLoginToken {
+    id        BigInt    @id @default(autoincrement())
+    token     String    @unique
+    adminId   BigInt
+    expiresAt DateTime
+    usedAt    DateTime?
+    createdAt DateTime  @default(now())
+
+    admin PlatformAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+    @@index([adminId])
+    @@index([expiresAt])
+}
+
 // Append-only audit ledger (charter §8). Written in the SAME transaction as
 // the operation it records, so the audit row commits iff the operation does.
 // Immutable: never updated, never deleted in normal operation. FK constraints
 // omitted like every other table — relations enforced at the app boundary.
 model AuditLog {
-    id         BigInt   @id @default(autoincrement())
+    id         BigInt    @id @default(autoincrement())
     tenantId   BigInt
     actorId    BigInt? // null for system-originated actions
+    actorType  ActorType @default(USER) // which id-space actorId belongs to
     entityType String
     entityId   String
     action     String

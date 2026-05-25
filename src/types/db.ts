@@ -14,6 +14,11 @@ export const UserRole = {
     VIEWER: "VIEWER"
 } as const;
 export type UserRole = (typeof UserRole)[keyof typeof UserRole];
+export const ActorType = {
+    USER: "USER",
+    PLATFORM_ADMIN: "PLATFORM_ADMIN"
+} as const;
+export type ActorType = (typeof ActorType)[keyof typeof ActorType];
 export const PartyType = {
     INDIVIDUAL: "INDIVIDUAL",
     BUSINESS: "BUSINESS"
@@ -152,6 +157,7 @@ export type AuditLog = {
     id: Generated<string>;
     tenantId: string;
     actorId: string | null;
+    actorType: Generated<ActorType>;
     entityType: string;
     entityId: string;
     action: string;
@@ -252,6 +258,30 @@ export type PasswordResetToken = {
     userId: string;
     expiresAt: Timestamp;
     usedAt: Timestamp | null;
+    createdAt: Generated<Timestamp>;
+};
+export type PlatformAdmin = {
+    id: Generated<string>;
+    publicId: Generated<string>;
+    email: string;
+    name: string;
+    isActive: Generated<boolean>;
+    createdAt: Generated<Timestamp>;
+    updatedAt: Generated<Timestamp>;
+};
+export type PlatformAdminLoginToken = {
+    id: Generated<string>;
+    token: string;
+    adminId: string;
+    expiresAt: Timestamp;
+    usedAt: Timestamp | null;
+    createdAt: Generated<Timestamp>;
+};
+export type PlatformAdminSession = {
+    id: Generated<string>;
+    token: string;
+    adminId: string;
+    expiresAt: Timestamp;
     createdAt: Generated<Timestamp>;
 };
 export type PriceList = {
@@ -679,6 +709,9 @@ export type DB = {
     GoodsReceipt: GoodsReceipt;
     GoodsReceiptLine: GoodsReceiptLine;
     PasswordResetToken: PasswordResetToken;
+    PlatformAdmin: PlatformAdmin;
+    PlatformAdminLoginToken: PlatformAdminLoginToken;
+    PlatformAdminSession: PlatformAdminSession;
     PriceList: PriceList;
     PriceListItem: PriceListItem;
     Product: Product;
