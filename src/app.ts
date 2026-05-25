@@ -7,6 +7,7 @@ import { platformPlugin } from './modules/platform/index.js';
 import { createDb } from './shared/db/index.js';
 import { createRedis } from './shared/cache/redis.js';
 import { startEmailWorkers } from './workers/email.worker.js';
+import { bullBoardPlugin } from './shared/queue/bull-board.js';
 import { config } from './shared/config/index.js';
 
 export interface AppOverrides {
@@ -64,6 +65,11 @@ export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstanc
     queueRedis,
     emailQueueUrl: emailEnabled ? queueRedisUrl : null,
     appBaseUrl: config.appBaseUrl,
+    ipAllowlist: overrides?.platformIpAllowlist ?? config.platformIpAllowlist,
+  });
+
+  await app.register(bullBoardPlugin, {
+    queueRedisUrl,
     ipAllowlist: overrides?.platformIpAllowlist ?? config.platformIpAllowlist,
   });
 
