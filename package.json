@@ -14,6 +14,7 @@
     "db:migrate:deploy": "node --env-file-if-exists=.env.local node_modules/prisma/build/index.js migrate deploy",
     "db:generate": "node --env-file-if-exists=.env.local node_modules/prisma/build/index.js generate",
     "db:studio": "node --env-file-if-exists=.env.local node_modules/prisma/build/index.js studio",
+    "platform:create-admin": "node --env-file-if-exists=.env.local --import tsx/esm src/scripts/create-platform-admin.cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
