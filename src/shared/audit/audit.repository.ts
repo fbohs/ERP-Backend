@@ -1,6 +1,6 @@
 import type { Transaction } from 'kysely';
 import type { AppDb } from '../db/index.js';
-import type { DB, ActorType } from '../../types/db.js';
+import type { DB, Actortype, Json } from '../../types/db.js';
 
 type Executor = AppDb | Transaction<DB>;
 
@@ -9,7 +9,7 @@ export interface AuditEntry {
   actorId: string | null;
   // Which id-space actorId belongs to. Defaults to USER (tenant user) when
   // omitted; platform actions pass PLATFORM_ADMIN. See ADR 0002.
-  actorType?: ActorType;
+  actorType?: Actortype;
   entityType: string;
   entityId: string;
   action: string;
@@ -40,8 +40,8 @@ export class AuditRepository {
         entityType: entry.entityType,
         entityId: entry.entityId,
         action: entry.action,
-        before: entry.before ?? null,
-        after: entry.after ?? null,
+        before: (entry.before ?? null) as Json | null,
+        after: (entry.after ?? null) as Json | null,
         requestId: entry.requestId ?? null,
       })
       .execute();

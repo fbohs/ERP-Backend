@@ -1,9 +1,9 @@
-import type { UserRole } from '../../types/db.js';
+import type { Userrole } from '../../types/db.js';
 
 export interface CachedSession {
   userId: string;
   tenantId: string;
-  role: UserRole;
+  role: Userrole;
 }
 
 export function sessionCacheKey(token: string): string {

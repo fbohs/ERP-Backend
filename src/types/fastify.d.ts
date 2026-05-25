@@ -1,11 +1,11 @@
-import type { UserRole } from './db.js';
+import type { Userrole } from './db.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
     user: {
       userId: string;
       tenantId: string;
-      role: UserRole;
+      role: Userrole;
     };
     // Set by the authenticatePlatform preHandler on the /platform/* surface.
     // Separate from `user` — a platform admin is never a tenant principal.

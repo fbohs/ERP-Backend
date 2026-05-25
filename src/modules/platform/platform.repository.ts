@@ -1,6 +1,6 @@
 import type { Transaction } from 'kysely';
 import type { AppDb } from '../../shared/db/index.js';
-import type { DB, UserRole } from '../../types/db.js';
+import type { DB, Userrole } from '../../types/db.js';
 
 type Executor = AppDb | Transaction<DB>;
 
@@ -84,7 +84,7 @@ export class PlatformRepository {
     email: string;
     name: string;
     password: string;
-    role: UserRole;
+    role: Userrole;
   }) {
     return this.exec
       .insertInto('User')

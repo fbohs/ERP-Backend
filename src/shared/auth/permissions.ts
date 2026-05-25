@@ -1,8 +1,8 @@
-import type { UserRole } from '../../types/db.js';
+import type { Userrole } from '../../types/db.js';
 
 // Single source of truth. `Permission` is derived from this array, so adding a
 // permission is one line — the union updates with it. Same pattern as
-// generated UserRole in src/types/db.ts.
+// generated Userrole in src/types/db.ts.
 const ALL_PERMISSIONS = [
   // products
   'product:read',
@@ -36,7 +36,7 @@ const ALL_PERMISSIONS = [
 
 export type Permission = (typeof ALL_PERMISSIONS)[number];
 
-export const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
+export const ROLE_PERMISSIONS: Record<Userrole, ReadonlySet<Permission>> = {
   ADMIN: new Set(ALL_PERMISSIONS),
 
   INVENTORY_MANAGER: new Set<Permission>([
@@ -103,6 +103,6 @@ export const ROLE_PERMISSIONS: Record<UserRole, ReadonlySet<Permission>> = {
   ]),
 };
 
-export function hasPermission(role: UserRole, permission: Permission): boolean {
+export function hasPermission(role: Userrole, permission: Permission): boolean {
   return ROLE_PERMISSIONS[role].has(permission);
 }
