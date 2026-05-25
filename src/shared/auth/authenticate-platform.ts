@@ -1,10 +1,10 @@
 import type { FastifyRequest } from 'fastify';
 import { UnauthorizedError } from '../errors/base.js';
-import { platformSessionCacheKey, type CachedPlatformSession } from './platform-session.js';
+import { hashToken } from './token-hash.js';
+import type { PlatformPrincipal } from './platform-session.js';
 import type { AppDb } from '../db/index.js';
-import type { Redis } from '../cache/redis.js';
 
-export function createAuthenticatePlatform(db: AppDb, redis: Redis) {
+export function createAuthenticatePlatform(db: AppDb) {
   return async function authenticatePlatform(request: FastifyRequest): Promise<void> {
     const authHeader = request.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
@@ -13,14 +13,12 @@ export function createAuthenticatePlatform(db: AppDb, redis: Redis) {
 
     const token = authHeader.slice(7);
 
-    // Fast path: Redis cache hit
-    const cached = await redis.get(platformSessionCacheKey(token));
-    if (cached !== null) {
-      request.platformAdmin = JSON.parse(cached) as CachedPlatformSession;
-      return;
-    }
-
-    // Slow path: DB lookup
+    // DB-only by design: the platform surface has NO session cache, so deleting
+    // a session row revokes access on the very next request — that is what makes
+    // logout, single-session eviction, and CLI termination effective. The tiny
+    // operator population makes the cache's throughput benefit irrelevant. Only
+    // the token hash is stored, so we match on the hash of the presented token.
+    // See ADR 0002.
     const row = await db
       .selectFrom('PlatformAdminSession')
       .innerJoin('PlatformAdmin', 'PlatformAdmin.id', 'PlatformAdminSession.adminId')
@@ -29,7 +27,7 @@ export function createAuthenticatePlatform(db: AppDb, redis: Redis) {
         'PlatformAdmin.isActive',
         'PlatformAdminSession.expiresAt',
       ])
-      .where('PlatformAdminSession.token', '=', token)
+      .where('PlatformAdminSession.tokenHash', '=', hashToken(token))
       .executeTakeFirst();
 
     if (!row || !row.isActive) {
@@ -42,13 +40,7 @@ export function createAuthenticatePlatform(db: AppDb, redis: Redis) {
       throw new UnauthorizedError('Invalid or expired session');
     }
 
-    const session: CachedPlatformSession = { adminId: row.adminId };
-
-    const remainingTtl = Math.floor((expiresAt.getTime() - Date.now()) / 1_000);
-    if (remainingTtl > 0) {
-      await redis.setex(platformSessionCacheKey(token), remainingTtl, JSON.stringify(session));
-    }
-
-    request.platformAdmin = session;
+    const principal: PlatformPrincipal = { adminId: row.adminId };
+    request.platformAdmin = principal;
   };
 }

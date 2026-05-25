@@ -61,7 +61,6 @@ export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstanc
   });
   await app.register(platformPlugin, {
     db,
-    redis,
     queueRedis,
     emailQueueUrl: emailEnabled ? queueRedisUrl : null,
     appBaseUrl: config.appBaseUrl,

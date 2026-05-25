@@ -19,47 +19,67 @@ export class PlatformRepository {
       .executeTakeFirst();
   }
 
-  async deleteUnusedLoginTokens(adminId: string): Promise<void> {
-    await this.exec
-      .deleteFrom('PlatformAdminLoginToken')
-      .where('adminId', '=', adminId)
-      .where('usedAt', 'is', null)
-      .execute();
-  }
-
-  async createLoginToken(adminId: string, token: string, expiresAt: Date): Promise<void> {
-    await this.exec
-      .insertInto('PlatformAdminLoginToken')
-      .values({ adminId, token, expiresAt })
-      .execute();
-  }
-
-  async findLoginToken(token: string) {
+  async findAdminById(id: string) {
     return this.exec
-      .selectFrom('PlatformAdminLoginToken')
-      .innerJoin('PlatformAdmin', 'PlatformAdmin.id', 'PlatformAdminLoginToken.adminId')
-      .select([
-        'PlatformAdminLoginToken.adminId',
-        'PlatformAdminLoginToken.expiresAt',
-        'PlatformAdminLoginToken.usedAt',
-        'PlatformAdmin.isActive',
-      ])
-      .where('PlatformAdminLoginToken.token', '=', token)
+      .selectFrom('PlatformAdmin')
+      .select(['id', 'isActive'])
+      .where('id', '=', id)
       .executeTakeFirst();
   }
 
-  async markLoginTokenUsed(token: string): Promise<void> {
+  // Supersede prior links: issuing a new one leaves only the newest live. Used
+  // tokens no longer linger (they are deleted on consumption), so this removes
+  // every outstanding token for the admin.
+  async deleteLoginTokensForAdmin(adminId: string): Promise<void> {
     await this.exec
-      .updateTable('PlatformAdminLoginToken')
-      .set({ usedAt: new Date() })
-      .where('token', '=', token)
+      .deleteFrom('PlatformAdminLoginToken')
+      .where('adminId', '=', adminId)
       .execute();
   }
 
-  async createSession(adminId: string, token: string, expiresAt: Date): Promise<void> {
+  async createLoginToken(adminId: string, tokenHash: string, expiresAt: Date): Promise<void> {
+    await this.exec
+      .insertInto('PlatformAdminLoginToken')
+      .values({ adminId, tokenHash, expiresAt })
+      .execute();
+  }
+
+  // Atomic single-use consumption: the DELETE returns a row iff the token still
+  // existed, so two concurrent verifications cannot both succeed (the second
+  // deletes zero rows). Expiry is checked by the caller on the returned row.
+  async consumeLoginToken(tokenHash: string) {
+    return this.exec
+      .deleteFrom('PlatformAdminLoginToken')
+      .where('tokenHash', '=', tokenHash)
+      .returning(['adminId', 'expiresAt'])
+      .executeTakeFirst();
+  }
+
+  // Single active session per admin: verification evicts all prior sessions
+  // before minting the new one. Also the primitive behind CLI termination.
+  async deleteSessionsForAdmin(adminId: string): Promise<void> {
+    await this.exec
+      .deleteFrom('PlatformAdminSession')
+      .where('adminId', '=', adminId)
+      .execute();
+  }
+
+  async deleteSessionByTokenHash(tokenHash: string): Promise<void> {
+    await this.exec
+      .deleteFrom('PlatformAdminSession')
+      .where('tokenHash', '=', tokenHash)
+      .execute();
+  }
+
+  async createSession(
+    adminId: string,
+    tokenHash: string,
+    expiresAt: Date,
+    ipAddress: string | null,
+  ): Promise<void> {
     await this.exec
       .insertInto('PlatformAdminSession')
-      .values({ adminId, token, expiresAt })
+      .values({ adminId, tokenHash, expiresAt, ipAddress })
       .execute();
   }
 

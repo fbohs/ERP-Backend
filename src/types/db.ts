@@ -221,8 +221,7 @@ export interface PlatformAdminLoginToken {
   createdAt: Generated<Timestamp>;
   expiresAt: Timestamp;
   id: Generated<Int8>;
-  token: string;
-  usedAt: Timestamp | null;
+  tokenHash: string;
 }
 
 export interface PlatformAdminSession {
@@ -230,7 +229,21 @@ export interface PlatformAdminSession {
   createdAt: Generated<Timestamp>;
   expiresAt: Timestamp;
   id: Generated<Int8>;
-  token: string;
+  ipAddress: string | null;
+  tokenHash: string;
+}
+
+export interface PlatformAuditLog {
+  action: string;
+  adminId: Int8 | null;
+  after: Json | null;
+  before: Json | null;
+  id: Generated<Int8>;
+  ipAddress: string | null;
+  occurredAt: Generated<Timestamp>;
+  requestId: string | null;
+  targetId: string | null;
+  targetType: string | null;
 }
 
 export interface PriceList {
@@ -692,6 +705,7 @@ export interface DB {
   PlatformAdmin: PlatformAdmin;
   PlatformAdminLoginToken: PlatformAdminLoginToken;
   PlatformAdminSession: PlatformAdminSession;
+  PlatformAuditLog: PlatformAuditLog;
   PriceList: PriceList;
   PriceListItem: PriceListItem;
   Product: Product;

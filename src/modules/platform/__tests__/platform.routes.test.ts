@@ -27,6 +27,12 @@ function loadMigrations(): string[] {
 
 const ADMIN_EMAIL = 'ops@platform.test';
 
+// Mirrors shared/auth/token-hash.ts — tokens are stored as their SHA-256 hash,
+// so tests insert the hash and submit the raw token.
+function sha256hex(value: string): string {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
 describe('platform routes', () => {
   let app: FastifyInstance;
   let pgContainer: StartedPostgreSqlContainer;
@@ -67,17 +73,18 @@ describe('platform routes', () => {
     await Promise.all([pgContainer.stop(), redisContainer.stop()]);
   });
 
-  // Issues a fresh login token row and exchanges it for a live session token.
+  // Issues a fresh login token row (hash stored, raw submitted) and exchanges it
+  // for a live session token.
   async function freshSessionToken(): Promise<string> {
-    const token = crypto.randomBytes(32).toString('hex');
+    const raw = crypto.randomBytes(32).toString('hex');
     await pool.query(
-      `INSERT INTO "PlatformAdminLoginToken" (token, "adminId", "expiresAt") VALUES ($1, $2, $3)`,
-      [token, adminId, new Date(Date.now() + 30 * 60 * 1_000)],
+      `INSERT INTO "PlatformAdminLoginToken" ("tokenHash", "adminId", "expiresAt") VALUES ($1, $2, $3)`,
+      [sha256hex(raw), adminId, new Date(Date.now() + 30 * 60 * 1_000)],
     );
     const res = await app.inject({
       method: 'POST',
       url: '/platform/auth/verify',
-      payload: { token },
+      payload: { token: raw },
     });
     return res.json<{ token: string }>().token;
   }
@@ -123,13 +130,14 @@ describe('platform routes', () => {
       });
       expect(res.statusCode).toBe(200);
 
-      const rows = await pool.query<{ token: string }>(
-        `SELECT token FROM "PlatformAdminLoginToken"
+      const rows = await pool.query<{ tokenHash: string }>(
+        `SELECT "tokenHash" FROM "PlatformAdminLoginToken"
          WHERE "adminId" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
         [adminId],
       );
       expect(rows.rows.length).toBe(1);
-      expect(rows.rows[0]!.token.length).toBeGreaterThan(0);
+      // Stored at rest as a 64-char SHA-256 hex digest, never the raw token.
+      expect(rows.rows[0]!.tokenHash).toMatch(/^[0-9a-f]{64}$/);
     });
 
     it('returns 200 for an unknown email without leaking existence (no token created)', async () => {
@@ -161,12 +169,13 @@ describe('platform routes', () => {
         payload: { email: ADMIN_EMAIL },
       });
 
-      const unused = await pool.query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM "PlatformAdminLoginToken"
-         WHERE "adminId" = $1 AND "usedAt" IS NULL`,
+      // Used tokens are deleted on consumption, so the only live token left for
+      // the admin is the most recently issued one.
+      const live = await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "PlatformAdminLoginToken" WHERE "adminId" = $1`,
         [adminId],
       );
-      expect(unused.rows[0]!.n).toBe(1);
+      expect(live.rows[0]!.n).toBe(1);
     });
 
     it('returns 422 on an invalid email', async () => {
@@ -181,16 +190,16 @@ describe('platform routes', () => {
 
   describe('POST /platform/auth/verify', () => {
     it('returns 200 with a working session token on a valid login token', async () => {
-      const token = crypto.randomBytes(32).toString('hex');
+      const raw = crypto.randomBytes(32).toString('hex');
       await pool.query(
-        `INSERT INTO "PlatformAdminLoginToken" (token, "adminId", "expiresAt") VALUES ($1, $2, $3)`,
-        [token, adminId, new Date(Date.now() + 30 * 60 * 1_000)],
+        `INSERT INTO "PlatformAdminLoginToken" ("tokenHash", "adminId", "expiresAt") VALUES ($1, $2, $3)`,
+        [sha256hex(raw), adminId, new Date(Date.now() + 30 * 60 * 1_000)],
       );
 
       const res = await app.inject({
         method: 'POST',
         url: '/platform/auth/verify',
-        payload: { token },
+        payload: { token: raw },
       });
       expect(res.statusCode).toBe(200);
       const sessionToken = res.json<{ token: string }>().token;
@@ -204,41 +213,78 @@ describe('platform routes', () => {
       });
       expect(authed.statusCode).toBe(200);
 
-      // the login token must now be consumed (single-use)
-      const used = await pool.query<{ usedAt: Date | null }>(
-        `SELECT "usedAt" FROM "PlatformAdminLoginToken" WHERE token = $1`,
-        [token],
+      // the login token must now be GONE (consumed by deletion, single-use)
+      const remaining = await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "PlatformAdminLoginToken" WHERE "tokenHash" = $1`,
+        [sha256hex(raw)],
       );
-      expect(used.rows[0]!.usedAt).not.toBeNull();
+      expect(remaining.rows[0]!.n).toBe(0);
+
+      // the session is stored hashed at rest — never the raw bearer token
+      const session = await pool.query<{ tokenHash: string }>(
+        `SELECT "tokenHash" FROM "PlatformAdminSession" WHERE "tokenHash" = $1`,
+        [sha256hex(sessionToken)],
+      );
+      expect(session.rows.length).toBe(1);
+      expect(session.rows[0]!.tokenHash).not.toBe(sessionToken);
+    });
+
+    it('records a platform.login audit row with the source IP', async () => {
+      const raw = crypto.randomBytes(32).toString('hex');
+      await pool.query(
+        `INSERT INTO "PlatformAdminLoginToken" ("tokenHash", "adminId", "expiresAt") VALUES ($1, $2, $3)`,
+        [sha256hex(raw), adminId, new Date(Date.now() + 30 * 60 * 1_000)],
+      );
+      await app.inject({
+        method: 'POST',
+        url: '/platform/auth/verify',
+        remoteAddress: '10.1.2.3',
+        payload: { token: raw },
+      });
+
+      const audit = await pool.query<{ adminId: string; ipAddress: string | null }>(
+        `SELECT "adminId", "ipAddress" FROM "PlatformAuditLog"
+         WHERE action = 'platform.login' AND "adminId" = $1 ORDER BY id DESC LIMIT 1`,
+        [adminId],
+      );
+      expect(audit.rows.length).toBe(1);
+      expect(audit.rows[0]!.ipAddress).toBe('10.1.2.3');
     });
 
     it('returns 401 on an expired token', async () => {
-      const token = crypto.randomBytes(32).toString('hex');
+      const raw = crypto.randomBytes(32).toString('hex');
       await pool.query(
-        `INSERT INTO "PlatformAdminLoginToken" (token, "adminId", "expiresAt") VALUES ($1, $2, $3)`,
-        [token, adminId, new Date(Date.now() - 1_000)],
+        `INSERT INTO "PlatformAdminLoginToken" ("tokenHash", "adminId", "expiresAt") VALUES ($1, $2, $3)`,
+        [sha256hex(raw), adminId, new Date(Date.now() - 1_000)],
       );
       const res = await app.inject({
         method: 'POST',
         url: '/platform/auth/verify',
-        payload: { token },
+        payload: { token: raw },
       });
       expect(res.statusCode).toBe(401);
     });
 
-    it('returns 401 on an already-used token', async () => {
-      const token = crypto.randomBytes(32).toString('hex');
+    it('is single-use: a second verify of the same token is rejected (double-spend)', async () => {
+      const raw = crypto.randomBytes(32).toString('hex');
       await pool.query(
-        `INSERT INTO "PlatformAdminLoginToken" (token, "adminId", "expiresAt", "usedAt")
-         VALUES ($1, $2, $3, $4)`,
-        [token, adminId, new Date(Date.now() + 30 * 60 * 1_000), new Date()],
+        `INSERT INTO "PlatformAdminLoginToken" ("tokenHash", "adminId", "expiresAt") VALUES ($1, $2, $3)`,
+        [sha256hex(raw), adminId, new Date(Date.now() + 30 * 60 * 1_000)],
       );
-      const res = await app.inject({
+
+      const first = await app.inject({
         method: 'POST',
         url: '/platform/auth/verify',
-        payload: { token },
+        payload: { token: raw },
       });
-      expect(res.statusCode).toBe(401);
+      expect(first.statusCode).toBe(200);
+
+      const second = await app.inject({
+        method: 'POST',
+        url: '/platform/auth/verify',
+        payload: { token: raw },
+      });
+      expect(second.statusCode).toBe(401);
     });
 
     it('returns 401 on an unknown token', async () => {
@@ -248,6 +294,102 @@ describe('platform routes', () => {
         payload: { token: 'a'.repeat(64) },
       });
       expect(res.statusCode).toBe(401);
+    });
+  });
+
+  describe('DELETE /platform/auth/logout', () => {
+    it('clears the session: the token no longer authenticates and a logout audit row is written', async () => {
+      const sessionToken = await freshSessionToken();
+
+      const out = await app.inject({
+        method: 'DELETE',
+        url: '/platform/auth/logout',
+        headers: { authorization: `Bearer ${sessionToken}` },
+      });
+      expect(out.statusCode).toBe(204);
+
+      // session row is gone
+      const rows = await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "PlatformAdminSession" WHERE "tokenHash" = $1`,
+        [sha256hex(sessionToken)],
+      );
+      expect(rows.rows[0]!.n).toBe(0);
+
+      // the token no longer works
+      const after = await app.inject({
+        method: 'GET',
+        url: '/platform/tenants',
+        headers: { authorization: `Bearer ${sessionToken}` },
+      });
+      expect(after.statusCode).toBe(401);
+
+      const audit = await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "PlatformAuditLog"
+         WHERE action = 'platform.logout' AND "adminId" = $1`,
+        [adminId],
+      );
+      expect(audit.rows[0]!.n).toBeGreaterThanOrEqual(1);
+    });
+
+    it('returns 401 when logging out without a session', async () => {
+      const res = await app.inject({ method: 'DELETE', url: '/platform/auth/logout' });
+      expect(res.statusCode).toBe(401);
+    });
+  });
+
+  describe('single active session', () => {
+    it('a new login evicts the previous session for the same admin', async () => {
+      const firstToken = await freshSessionToken();
+      const secondToken = await freshSessionToken();
+
+      // the older session is dead
+      const old = await app.inject({
+        method: 'GET',
+        url: '/platform/tenants',
+        headers: { authorization: `Bearer ${firstToken}` },
+      });
+      expect(old.statusCode).toBe(401);
+
+      // the newer session works
+      const fresh = await app.inject({
+        method: 'GET',
+        url: '/platform/tenants',
+        headers: { authorization: `Bearer ${secondToken}` },
+      });
+      expect(fresh.statusCode).toBe(200);
+
+      // exactly one live session row remains for the admin
+      const count = await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "PlatformAdminSession" WHERE "adminId" = $1`,
+        [adminId],
+      );
+      expect(count.rows[0]!.n).toBe(1);
+    });
+  });
+
+  describe('DB-only auth (no session cache)', () => {
+    it('revokes instantly: deleting the session row 401s the very next request', async () => {
+      const sessionToken = await freshSessionToken();
+
+      // sanity: it works first
+      const ok = await app.inject({
+        method: 'GET',
+        url: '/platform/tenants',
+        headers: { authorization: `Bearer ${sessionToken}` },
+      });
+      expect(ok.statusCode).toBe(200);
+
+      // delete the row directly — no cache should serve a stale copy
+      await pool.query(`DELETE FROM "PlatformAdminSession" WHERE "tokenHash" = $1`, [
+        sha256hex(sessionToken),
+      ]);
+
+      const revoked = await app.inject({
+        method: 'GET',
+        url: '/platform/tenants',
+        headers: { authorization: `Bearer ${sessionToken}` },
+      });
+      expect(revoked.statusCode).toBe(401);
     });
   });
 

@@ -23,7 +23,8 @@ export const config = {
   sessionTtlSeconds: 28_800,            // 8 hours, absolute expiry
   passwordResetTtlSeconds: 1_800,       // 30 minutes
   platformSessionTtlSeconds: 28_800,    // 8 hours, absolute expiry
-  platformLoginTokenTtlSeconds: 900,    // 15 minutes — magic-link login
+  platformLoginTokenTtlSeconds: 300,    // 5 minutes — magic-link login (short
+                                        // window; email latency tolerated)
   get isProduction() {
     return this.nodeEnv === 'production';
   },
