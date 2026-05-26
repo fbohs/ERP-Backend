@@ -53,6 +53,11 @@ enum ActorType {
     PLATFORM_ADMIN
 }
 
+enum PasswordResetTokenType {
+    PASSWORD_RESET
+    FIRST_LOGIN_SETUP
+}
+
 enum PartyType {
     INDIVIDUAL
     BUSINESS
@@ -194,12 +199,13 @@ model User {
     publicId String @unique @default(dbgenerated("uuidv7()")) @db.Uuid
     tenantId BigInt
 
-    email    String   @unique // globally unique — used for login
-    phone    String?
-    name     String
-    password String
-    role     UserRole @default(VIEWER)
-    isActive Boolean  @default(true)
+    email              String   @unique // globally unique — used for login
+    phone              String?
+    name               String
+    password           String
+    role               UserRole @default(VIEWER)
+    isActive           Boolean  @default(true)
+    mustChangePassword Boolean  @default(false)
 
     createdAt           DateTime             @default(now())
     updatedAt           DateTime             @default(now()) @updatedAt
@@ -226,12 +232,13 @@ model Session {
 }
 
 model PasswordResetToken {
-    id        BigInt    @id @default(autoincrement())
-    token     String    @unique
+    id        BigInt                 @id @default(autoincrement())
+    token     String                 @unique
     userId    BigInt
+    type      PasswordResetTokenType @default(PASSWORD_RESET)
     expiresAt DateTime
     usedAt    DateTime?
-    createdAt DateTime  @default(now())
+    createdAt DateTime               @default(now())
 
     user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

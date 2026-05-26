@@ -33,6 +33,8 @@ export type Numeric = ColumnType<string, number | string, number | string>;
 
 export type Partytype = "BUSINESS" | "INDIVIDUAL";
 
+export type Passwordresettokentype = "FIRST_LOGIN_SETUP" | "PASSWORD_RESET";
+
 export type Pricelisttype = "PURCHASE" | "SALES";
 
 export type Productstatus = "ACTIVE" | "ARCHIVED" | "DISCONTINUED" | "DRAFT";
@@ -202,6 +204,7 @@ export interface PasswordResetToken {
   expiresAt: Timestamp;
   id: Generated<Int8>;
   token: string;
+  type: Generated<Passwordresettokentype>;
   usedAt: Timestamp | null;
   userId: Int8;
 }
@@ -662,6 +665,7 @@ export interface User {
   email: string;
   id: Generated<Int8>;
   isActive: Generated<boolean>;
+  mustChangePassword: Generated<boolean>;
   name: string;
   password: string;
   phone: string | null;
