@@ -14,7 +14,8 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": ".claude/hooks/block-ai-attribution.sh" }
+          { "type": "command", "command": ".claude/hooks/block-ai-attribution.sh" },
+          { "type": "command", "command": ".claude/hooks/warn-untracked-learnings.sh" }
         ]
       }
     ],
