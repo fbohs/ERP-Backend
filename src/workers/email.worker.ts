@@ -1,6 +1,6 @@
 import { Worker } from 'bullmq';
 import { createResend } from '../shared/email/resend.js';
-import { passwordResetEmail, platformLoginEmail } from '../shared/email/templates.js';
+import { passwordResetEmail, platformLoginEmail, tenantWelcomeEmail } from '../shared/email/templates.js';
 import {
   PASSWORD_RESET_EMAIL_QUEUE,
   type PasswordResetEmailPayload,
@@ -9,6 +9,10 @@ import {
   PLATFORM_LOGIN_EMAIL_QUEUE,
   type PlatformLoginEmailPayload,
 } from '../modules/platform/jobs/send-login-link-email.js';
+import {
+  TENANT_WELCOME_EMAIL_QUEUE,
+  type TenantWelcomeEmailPayload,
+} from '../modules/platform/jobs/send-tenant-welcome-email.js';
 import type { Resend } from '../shared/email/resend.js';
 
 function connectionFor(queueRedisUrl: string) {
@@ -69,7 +73,26 @@ export function createEmailWorkers(queueRedisUrl: string, resend: Resend, opts: 
     { connection, concurrency: 5 },
   );
 
-  return [passwordResetWorker, platformLoginWorker];
+  const tenantWelcomeWorker = new Worker<TenantWelcomeEmailPayload>(
+    TENANT_WELCOME_EMAIL_QUEUE,
+    async (job) => {
+      const { email, name, tenantName, temporaryPassword, loginUrl } = job.data;
+
+      const result = await resend.emails.send({
+        from: opts.emailFrom,
+        to: email,
+        subject: `Welcome to ${tenantName} — your account is ready`,
+        html: tenantWelcomeEmail({ name, tenantName, email, temporaryPassword, loginUrl }),
+      });
+
+      if (result.error) {
+        throw new Error(`Resend error: ${result.error.message}`);
+      }
+    },
+    { connection, concurrency: 5 },
+  );
+
+  return [passwordResetWorker, platformLoginWorker, tenantWelcomeWorker];
 }
 
 export function startEmailWorkers(queueRedisUrl: string, apiKey: string, opts: EmailWorkerOptions): Worker[] {

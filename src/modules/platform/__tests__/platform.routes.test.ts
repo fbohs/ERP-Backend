@@ -451,14 +451,12 @@ describe('platform routes', () => {
       expect(audit.rows[0]!.actorType).toBe('PLATFORM_ADMIN');
       expect(audit.rows[0]!.actorId).toBe(adminId);
 
-      // onboarding: the new admin gets a password-reset ("set your password")
-      // token rather than a password chosen by the platform operator
-      const reset = await pool.query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM "PasswordResetToken" prt
-         JOIN "User" u ON u.id = prt."userId"
-         WHERE u.email = 'admin@globex.test'`,
+      // onboarding: the new admin's account has a system-generated password and
+      // mustChangePassword = true so first login forces a password change
+      const flagged = await pool.query<{ mustChangePassword: boolean }>(
+        `SELECT "mustChangePassword" FROM "User" WHERE email = 'admin@globex.test'`,
       );
-      expect(reset.rows[0]!.n).toBe(1);
+      expect(flagged.rows[0]!.mustChangePassword).toBe(true);
     });
 
     it('returns 409 on a duplicate tenant slug', async () => {

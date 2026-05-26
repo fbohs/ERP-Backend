@@ -1,6 +1,6 @@
 import type { Transaction } from 'kysely';
 import type { AppDb } from '../../shared/db/index.js';
-import type { DB } from '../../types/db.js';
+import type { DB, Passwordresettokentype } from '../../types/db.js';
 
 type Executor = AppDb | Transaction<DB>;
 
@@ -24,6 +24,7 @@ export class AuthRepository {
         'User.password',
         'User.role',
         'User.isActive',
+        'User.mustChangePassword',
         'Tenant.publicId as tenantPublicId',
         'Tenant.slug as tenantSlug',
         'Tenant.name as tenantName',
@@ -64,26 +65,37 @@ export class AuthRepository {
       .execute();
   }
 
-  async createPasswordResetToken(userId: string, token: string, expiresAt: Date): Promise<void> {
+  async createPasswordResetToken(
+    userId: string,
+    token: string,
+    expiresAt: Date,
+    type: Passwordresettokentype = 'PASSWORD_RESET',
+  ): Promise<void> {
     await this.exec
       .insertInto('PasswordResetToken')
-      .values({ userId, token, expiresAt })
+      .values({ userId, token, expiresAt, type })
       .execute();
   }
 
-  async findPasswordResetToken(token: string) {
+  async findPasswordResetToken(token: string, type: Passwordresettokentype) {
     return this.exec
       .selectFrom('PasswordResetToken')
       .innerJoin('User', 'User.id', 'PasswordResetToken.userId')
+      .innerJoin('Tenant', 'Tenant.id', 'User.tenantId')
       .select([
         'PasswordResetToken.userId',
+        'PasswordResetToken.type',
         'PasswordResetToken.expiresAt',
         'PasswordResetToken.usedAt',
         'User.tenantId',
         'User.email',
         'User.name',
+        'Tenant.publicId as tenantPublicId',
+        'Tenant.slug as tenantSlug',
+        'Tenant.name as tenantName',
       ])
       .where('PasswordResetToken.token', '=', token)
+      .where('PasswordResetToken.type', '=', type)
       .executeTakeFirst();
   }
 
@@ -123,6 +135,14 @@ export class AuthRepository {
     await this.exec
       .updateTable('User')
       .set({ password: passwordHash })
+      .where('User.id', '=', userId)
+      .execute();
+  }
+
+  async setMustChangePassword(userId: string, value: boolean): Promise<void> {
+    await this.exec
+      .updateTable('User')
+      .set({ mustChangePassword: value })
       .where('User.id', '=', userId)
       .execute();
   }

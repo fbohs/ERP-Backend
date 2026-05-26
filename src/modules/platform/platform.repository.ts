@@ -105,6 +105,7 @@ export class PlatformRepository {
     name: string;
     password: string;
     role: Userrole;
+    mustChangePassword: boolean;
   }) {
     return this.exec
       .insertInto('User')
@@ -114,16 +115,10 @@ export class PlatformRepository {
         name: input.name,
         password: input.password,
         role: input.role,
+        mustChangePassword: input.mustChangePassword,
       })
       .returning(['id', 'publicId'])
       .executeTakeFirstOrThrow();
-  }
-
-  async createPasswordResetToken(userId: string, token: string, expiresAt: Date): Promise<void> {
-    await this.exec
-      .insertInto('PasswordResetToken')
-      .values({ userId, token, expiresAt })
-      .execute();
   }
 
   // Cross-tenant by design: this is a PLATFORM read across all tenants, not a
@@ -140,7 +135,7 @@ export class PlatformRepository {
   async findTenantByPublicId(publicId: string) {
     return this.exec
       .selectFrom('Tenant')
-      .select(['id', 'publicId', 'slug', 'name', 'isActive'])
+      .select(['id', 'publicId', 'slug', 'name', 'isActive', 'plan', 'createdAt'])
       .where('publicId', '=', publicId)
       .executeTakeFirst();
   }

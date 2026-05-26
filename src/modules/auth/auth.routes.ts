@@ -3,6 +3,7 @@ import {
   LoginBodySchema,
   ForgotPasswordBodySchema,
   ResetPasswordBodySchema,
+  SetupPasswordBodySchema,
   type LoginResponse,
 } from './auth.schemas.js';
 import { AuthRepository } from './auth.repository.js';
@@ -84,6 +85,24 @@ export const authPlugin: FastifyPluginAsync<AuthPluginOptions> = async (app, opt
 
       await service.resetPassword(parsed.data.token, parsed.data.newPassword, request.id);
       return reply.status(200).send();
+    },
+  );
+
+  app.post(
+    '/auth/setup-password',
+    { preHandler: [idempotency.before], onSend: [idempotency.after] },
+    async (request, reply) => {
+      const parsed = SetupPasswordBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        throw new ValidationError('Invalid request body');
+      }
+
+      const result = await service.setupPassword(
+        parsed.data.token,
+        parsed.data.newPassword,
+        request.id,
+      );
+      return reply.status(200).send(result);
     },
   );
 };

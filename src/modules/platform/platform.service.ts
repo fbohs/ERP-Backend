@@ -4,12 +4,15 @@ import { config } from '../../shared/config/index.js';
 import { UnauthorizedError } from '../../shared/errors/base.js';
 import { logger } from '../../shared/logging/index.js';
 import { hashToken } from '../../shared/auth/index.js';
-import { enqueuePasswordResetEmail, type PasswordResetEmailQueue } from '../auth/index.js';
 import { TenantSlugTakenError, TenantNotFoundError } from './platform.errors.js';
 import {
   enqueuePlatformLoginEmail,
   type PlatformLoginEmailQueue,
 } from './jobs/send-login-link-email.js';
+import {
+  enqueueTenantWelcomeEmail,
+  type TenantWelcomeEmailQueue,
+} from './jobs/send-tenant-welcome-email.js';
 import type { CreateTenantBody } from './platform.schemas.js';
 import type { PlatformRepository } from './platform.repository.js';
 import type { AuditRepository, PlatformAuditRepository } from '../../shared/audit/index.js';
@@ -39,6 +42,8 @@ interface TenantView {
   slug: string;
   name: string;
   isActive: boolean;
+  plan: string;
+  createdAt: string;
 }
 
 // Postgres unique-violation SQLSTATE — the slug pre-check has a race window, so
@@ -51,6 +56,27 @@ function toDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value);
 }
 
+// Generates a cryptographically random alphanumeric password of the given
+// length. Uses rejection sampling to stay uniform over [A-Za-z0-9].
+function generateTemporaryPassword(length = 20): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  // Rejection sampling: discard bytes that fall outside the usable range to
+  // avoid modulo bias. The usable range covers 99.6% of byte values at 62
+  // chars, so rejection is rare.
+  const limit = 256 - (256 % chars.length);
+  while (result.length < length) {
+    const bytes = crypto.randomBytes(length * 2);
+    for (const byte of bytes) {
+      if (byte < limit) {
+        result += chars[byte % chars.length];
+        if (result.length === length) break;
+      }
+    }
+  }
+  return result;
+}
+
 export class PlatformService {
   constructor(
     private readonly repo: PlatformRepository,
@@ -58,7 +84,7 @@ export class PlatformService {
     private readonly platformAudit: PlatformAuditRepository,
     private readonly db: AppDb,
     private readonly loginEmailQueue: PlatformLoginEmailQueue | null,
-    private readonly onboardingEmailQueue: PasswordResetEmailQueue | null,
+    private readonly welcomeEmailQueue: TenantWelcomeEmailQueue | null,
     private readonly appBaseUrl: string,
   ) {}
 
@@ -194,12 +220,8 @@ export class PlatformService {
       throw new TenantSlugTakenError(`Tenant slug '${input.tenant.slug}' is already taken`);
     }
 
-    // The first admin never gets a usable password from us: an unguessable
-    // placeholder hash is stored, and onboarding goes through the standard
-    // password-reset ("set your password") flow. See ADR 0002.
-    const placeholderPassword = await argon2.hash(crypto.randomBytes(32).toString('hex'));
-    const resetToken = crypto.randomBytes(32).toString('hex');
-    const resetExpiresAt = new Date(Date.now() + config.passwordResetTtlSeconds * 1_000);
+    const temporaryPassword = generateTemporaryPassword();
+    const passwordHash = await argon2.hash(temporaryPassword);
 
     let tenantPublicId = '';
     try {
@@ -207,14 +229,14 @@ export class PlatformService {
         const txRepo = this.repo.withTx(tx);
         const tenant = await txRepo.createTenant(input.tenant.name, input.tenant.slug);
         tenantPublicId = tenant.publicId;
-        const user = await txRepo.createUser({
+        await txRepo.createUser({
           tenantId: tenant.id,
           email: input.admin.email,
           name: input.admin.name,
-          password: placeholderPassword,
+          password: passwordHash,
           role: 'ADMIN',
+          mustChangePassword: true,
         });
-        await txRepo.createPasswordResetToken(user.id, resetToken, resetExpiresAt);
         await this.audit.withTx(tx).record({
           tenantId: tenant.id,
           actorId: actor.adminId,
@@ -233,12 +255,14 @@ export class PlatformService {
       throw err;
     }
 
-    if (this.onboardingEmailQueue) {
-      const resetUrl = `${this.appBaseUrl}/reset-password?token=${resetToken}`;
-      await enqueuePasswordResetEmail(this.onboardingEmailQueue, resetToken, {
+    if (this.welcomeEmailQueue) {
+      const loginUrl = `${this.appBaseUrl}/login`;
+      await enqueueTenantWelcomeEmail(this.welcomeEmailQueue, tenantPublicId, {
         email: input.admin.email,
         name: input.admin.name,
-        resetUrl,
+        tenantName: input.tenant.name,
+        temporaryPassword,
+        loginUrl,
       });
     }
 
@@ -275,6 +299,28 @@ export class PlatformService {
       });
     });
 
-    return { id: tenant.publicId, slug: tenant.slug, name: tenant.name, isActive };
+    return {
+      id: tenant.publicId,
+      slug: tenant.slug,
+      name: tenant.name,
+      isActive,
+      plan: tenant.plan,
+      createdAt: toDate(tenant.createdAt).toISOString(),
+    };
+  }
+
+  async getTenant(publicId: string): Promise<TenantView> {
+    const tenant = await this.repo.findTenantByPublicId(publicId);
+    if (tenant === undefined) {
+      throw new TenantNotFoundError('Tenant not found');
+    }
+    return {
+      id: tenant.publicId,
+      slug: tenant.slug,
+      name: tenant.name,
+      isActive: tenant.isActive,
+      plan: tenant.plan,
+      createdAt: toDate(tenant.createdAt).toISOString(),
+    };
   }
 }

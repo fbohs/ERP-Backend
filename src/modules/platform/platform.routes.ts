@@ -10,8 +10,8 @@ import {
 import { PlatformRepository } from './platform.repository.js';
 import { PlatformService } from './platform.service.js';
 import { createPlatformLoginEmailQueue } from './jobs/send-login-link-email.js';
+import { createTenantWelcomeEmailQueue } from './jobs/send-tenant-welcome-email.js';
 import { AuditRepository, PlatformAuditRepository } from '../../shared/audit/index.js';
-import { createPasswordResetEmailQueue } from '../auth/index.js';
 import { createAuthenticatePlatform, createIpAllowlist } from '../../shared/auth/index.js';
 import { createIdempotency } from '../../shared/idempotency/index.js';
 import { ValidationError, NotFoundError } from '../../shared/errors/base.js';
@@ -64,15 +64,15 @@ export const platformPlugin: FastifyPluginAsync<PlatformPluginOptions> = async (
   const platformAuditRepo = new PlatformAuditRepository(opts.db);
   const loginEmailQueue =
     opts.emailQueueUrl !== null ? createPlatformLoginEmailQueue(opts.emailQueueUrl) : null;
-  const onboardingEmailQueue =
-    opts.emailQueueUrl !== null ? createPasswordResetEmailQueue(opts.emailQueueUrl) : null;
+  const welcomeEmailQueue =
+    opts.emailQueueUrl !== null ? createTenantWelcomeEmailQueue(opts.emailQueueUrl) : null;
   const service = new PlatformService(
     repo,
     auditRepo,
     platformAuditRepo,
     opts.db,
     loginEmailQueue,
-    onboardingEmailQueue,
+    welcomeEmailQueue,
     opts.appBaseUrl,
   );
   const authenticatePlatform = createAuthenticatePlatform(opts.db);
