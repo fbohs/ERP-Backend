@@ -1,5 +1,6 @@
 import { Worker } from 'bullmq';
 import { createResend } from '../shared/email/resend.js';
+import { passwordResetEmail, platformLoginEmail } from '../shared/email/templates.js';
 import {
   PASSWORD_RESET_EMAIL_QUEUE,
   type PasswordResetEmailPayload,
@@ -20,7 +21,14 @@ function connectionFor(queueRedisUrl: string) {
   };
 }
 
-export function createEmailWorkers(queueRedisUrl: string, resend: Resend): Worker[] {
+interface EmailWorkerOptions {
+  emailFrom: string;
+  passwordResetTtlMinutes: number;
+  platformLoginTtlMinutes: number;
+  appBaseUrl: string;
+}
+
+export function createEmailWorkers(queueRedisUrl: string, resend: Resend, opts: EmailWorkerOptions): Worker[] {
   const connection = connectionFor(queueRedisUrl);
 
   const passwordResetWorker = new Worker<PasswordResetEmailPayload>(
@@ -29,15 +37,10 @@ export function createEmailWorkers(queueRedisUrl: string, resend: Resend): Worke
       const { email, name, resetUrl } = job.data;
 
       const result = await resend.emails.send({
-        from: 'onboarding@resend.dev',
+        from: opts.emailFrom,
         to: email,
         subject: 'Reset your password',
-        html: `
-          <p>Hi ${name},</p>
-          <p>Click the link below to reset your password. It expires in 30 minutes.</p>
-          <p><a href="${resetUrl}">${resetUrl}</a></p>
-          <p>If you did not request this, ignore this email.</p>
-        `,
+        html: passwordResetEmail({ name, resetUrl, ttlMinutes: opts.passwordResetTtlMinutes }),
       });
 
       if (result.error) {
@@ -53,15 +56,10 @@ export function createEmailWorkers(queueRedisUrl: string, resend: Resend): Worke
       const { email, name, loginUrl } = job.data;
 
       const result = await resend.emails.send({
-        from: 'onboarding@resend.dev',
+        from: opts.emailFrom,
         to: email,
-        subject: 'Your admin login link',
-        html: `
-          <p>Hi ${name},</p>
-          <p>Click the link below to sign in to the platform console. It expires in 15 minutes.</p>
-          <p><a href="${loginUrl}">${loginUrl}</a></p>
-          <p>If you did not request this, ignore this email.</p>
-        `,
+        subject: 'Your sign-in link for Platform Console',
+        html: platformLoginEmail({ name, loginUrl, ttlMinutes: opts.platformLoginTtlMinutes }),
       });
 
       if (result.error) {
@@ -74,7 +72,7 @@ export function createEmailWorkers(queueRedisUrl: string, resend: Resend): Worke
   return [passwordResetWorker, platformLoginWorker];
 }
 
-export function startEmailWorkers(queueRedisUrl: string, apiKey: string): Worker[] {
+export function startEmailWorkers(queueRedisUrl: string, apiKey: string, opts: EmailWorkerOptions): Worker[] {
   const resend = createResend(apiKey);
-  return createEmailWorkers(queueRedisUrl, resend);
+  return createEmailWorkers(queueRedisUrl, resend, opts);
 }

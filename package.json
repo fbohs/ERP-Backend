@@ -27,6 +27,8 @@
   "dependencies": {
     "@bull-board/api": "7.1.5",
     "@bull-board/fastify": "7.1.5",
+    "@fastify/swagger": "9.7.0",
+    "@fastify/swagger-ui": "5.2.6",
     "@prisma/client": "7.8.0",
     "argon2": "0.44.0",
     "bullmq": "5.76.8",
