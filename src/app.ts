@@ -116,10 +116,12 @@ export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstanc
     ipAllowlist: overrides?.platformIpAllowlist ?? config.platformIpAllowlist,
   });
 
-  await app.register(bullBoardPlugin, {
-    queueRedisUrl,
-    ipAllowlist: overrides?.platformIpAllowlist ?? config.platformIpAllowlist,
-  });
+  if (queueRedisUrl !== '') {
+    await app.register(bullBoardPlugin, {
+      queueRedisUrl,
+      ipAllowlist: overrides?.platformIpAllowlist ?? config.platformIpAllowlist,
+    });
+  }
 
   return app;
 }
