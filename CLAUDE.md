@@ -23,6 +23,10 @@ Open-source ERP backend (accounting, HR, inventory). Money moves, ledgers must r
 
 Anything outside this list → ADR (`/adr`).
 
+**Package versions are always exact.** No `^` or `~` in `package.json`. Use `npm install --save-exact` / `npm install --save-dev --save-exact`.
+
+**After adding packages, audit for unused ones.** Grep `src/` for imports of every existing package. Remove anything with zero imports that is not a locked stack dependency (stack deps like `bullmq`, `decimal.js` are retained even if not yet used — they will be). Use `npm uninstall` to remove from both `package.json` and `node_modules`.
+
 ## Folder Map
 
 ```
@@ -38,13 +42,13 @@ src/
 docs/
   engineering-charter.md → long-form spec (read when needed)
   adr/                → architecture decisions
+learnings/            → owner's personal reference only — DO NOT read or process
 prisma/               → schema + migrations
-project-learnings/    → owner's personal reference only — DO NOT read or process
 ```
 
-## project-learnings/
+## learnings/
 
-This folder contains markdown files written as the owner's personal quick-reference notes. They are **not inputs for Claude**. Do not read, reference, or process any file in `project-learnings/` unless the owner explicitly asks you to look at a specific file for a specific reason.
+This folder contains markdown files written as the owner's personal quick-reference notes. They are **not inputs for Claude**. Do not read, reference, or process any file in `learnings/` unless the owner explicitly asks you to look at a specific file for a specific reason. Code comments and commit messages may link to files inside it as breadcrumbs for human readers — those links are not an invitation to open the targets.
 
 ## Always-On Hard Rules
 
@@ -85,6 +89,18 @@ These apply everywhere. Violating any of them blocks a PR.
 - Adding a background job → `.claude/skills/add-bullmq-job/SKILL.md`.
 - Writing a query → `.claude/skills/tenant-scoped-query/SKILL.md`.
 - Need depth on something (SOLID specifics, error hierarchy, observability, caching strategy, performance budgets, security) → `docs/engineering-charter.md`.
+
+## Git
+
+Invoke `.claude/skills/git/SKILL.md` before any git operation — commit, push, rebase, amend, PR, recovery.
+
+**Unconditional rules (apply even without invoking the skill):**
+
+- **No `Co-Authored-By` trailers**, no AI attribution, no mention of Claude or any assistant tool — ever. Enforced by `.claude/hooks/block-ai-attribution.sh`; commits containing such trailers will be rejected before they land.
+- **Commit or push only when the user explicitly asks.** Never on your own initiative.
+- **If on the default branch (`production`), branch first** and get the new branch name confirmed before any state-mutating work.
+
+Everything else — message style, granularity, splitting a dirty tree, rebases, push safety, PR bodies, recovery — see the git skill.
 
 ## Interaction Protocol
 

@@ -25,17 +25,10 @@
 
 datasource db {
     provider = "postgresql"
-    url      = env("DATABASE_URL")
 }
 
 generator client {
     provider = "prisma-client-js"
-}
-
-generator kysely {
-    provider = "prisma-kysely"
-    output   = "../src/types"
-    fileName = "db.ts"
 }
 
 // ============================================================================
@@ -50,6 +43,19 @@ enum UserRole {
     WAREHOUSE_OPERATOR
     ACCOUNTANT
     VIEWER
+}
+
+// Disambiguates AuditLog.actorId, which is a bare BigInt drawn from one of two
+// separate id-spaces: tenant Users and PlatformAdmins. Without this, a platform
+// admin id and a user id are indistinguishable. See ADR 0002.
+enum ActorType {
+    USER
+    PLATFORM_ADMIN
+}
+
+enum PasswordResetTokenType {
+    PASSWORD_RESET
+    FIRST_LOGIN_SETUP
 }
 
 enum PartyType {
@@ -193,16 +199,18 @@ model User {
     publicId String @unique @default(dbgenerated("uuidv7()")) @db.Uuid
     tenantId BigInt
 
-    email    String   @unique // globally unique — used for login
-    phone    String?
-    name     String
-    password String
-    role     UserRole @default(VIEWER)
-    isActive Boolean  @default(true)
+    email              String   @unique // globally unique — used for login
+    phone              String?
+    name               String
+    password           String
+    role               UserRole @default(VIEWER)
+    isActive           Boolean  @default(true)
+    mustChangePassword Boolean  @default(false)
 
-    createdAt DateTime  @default(now())
-    updatedAt DateTime  @default(now()) @updatedAt
-    sessions  Session[]
+    createdAt           DateTime             @default(now())
+    updatedAt           DateTime             @default(now()) @updatedAt
+    sessions            Session[]
+    passwordResetTokens PasswordResetToken[]
 
     tenant Tenant @relation(fields: [tenantId], references: [id])
 
@@ -221,6 +229,122 @@ model Session {
 
     @@index([userId])
     @@index([expiresAt])
+}
+
+model PasswordResetToken {
+    id        BigInt                 @id @default(autoincrement())
+    token     String                 @unique
+    userId    BigInt
+    type      PasswordResetTokenType @default(PASSWORD_RESET)
+    expiresAt DateTime
+    usedAt    DateTime?
+    createdAt DateTime               @default(now())
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@index([userId])
+    @@index([expiresAt])
+}
+
+// Platform operator (superadmin). Cross-tenant by nature, so it carries NO
+// tenantId — and NO password: it authenticates passwordlessly via a single-use
+// emailed magic link (PlatformAdminLoginToken). Modeled entirely separately
+// from tenant Users so the "every business query is tenant-scoped" P0 invariant
+// stays structurally true. See ADR 0002.
+model PlatformAdmin {
+    id       BigInt @id @default(autoincrement())
+    publicId String @unique @default(dbgenerated("uuidv7()")) @db.Uuid
+
+    email    String  @unique
+    name     String
+    isActive Boolean @default(true)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @default(now()) @updatedAt
+
+    sessions    PlatformAdminSession[]
+    loginTokens PlatformAdminLoginToken[]
+}
+
+// Authenticated platform-operator session. Only the SHA-256 hash of the bearer
+// token is stored (tokenHash) — a database leak cannot yield a usable session.
+// Auth is DB-only (no cache), so deleting a row revokes the session instantly.
+// ipAddress records where the session was established, for the audit trail.
+model PlatformAdminSession {
+    id        BigInt   @id @default(autoincrement())
+    tokenHash String   @unique
+    adminId   BigInt
+    ipAddress String?
+    expiresAt DateTime
+    createdAt DateTime @default(now())
+
+    admin PlatformAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+    @@index([adminId])
+    @@index([expiresAt])
+}
+
+// Single-use, single-live, short-TTL magic-link token. The raw token is emailed;
+// only its SHA-256 hash is stored (tokenHash), so a database leak cannot yield a
+// usable link. Issuing a new one supersedes the admin's prior tokens. A token is
+// consumed by an atomic DELETE ... RETURNING on verification — single-use is
+// enforced by the delete affecting exactly one row, closing the double-spend race.
+model PlatformAdminLoginToken {
+    id        BigInt   @id @default(autoincrement())
+    tokenHash String   @unique
+    adminId   BigInt
+    expiresAt DateTime
+    createdAt DateTime @default(now())
+
+    admin PlatformAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+    @@index([adminId])
+    @@index([expiresAt])
+}
+
+// Platform-operator audit ledger. The tenant AuditLog requires a tenantId, but
+// platform-GLOBAL events (login, logout, session termination, admin lifecycle via
+// CLI) have no tenant — they live here. Tenant-scoped platform actions (tenant
+// created/suspended) still write to AuditLog with actorType=PLATFORM_ADMIN.
+// Append-only and immutable: never updated, never deleted in normal operation.
+// FK constraints omitted like every other table — relations enforced at the app
+// boundary. See ADR 0002.
+model PlatformAuditLog {
+    id         BigInt   @id @default(autoincrement())
+    adminId    BigInt? // null for CLI/system actions with no live admin principal
+    action     String
+    targetType String? // e.g. "PlatformAdmin", "PlatformAdminSession", "Tenant"
+    targetId   String?
+    before     Json? // state before the change, when applicable
+    after      Json? // state after the change, when applicable
+    ipAddress  String?
+    requestId  String? // Fastify request id; null for CLI actions
+    occurredAt DateTime @default(now())
+
+    @@index([adminId, occurredAt])
+    @@index([action, occurredAt])
+}
+
+// Append-only audit ledger (charter §8). Written in the SAME transaction as
+// the operation it records, so the audit row commits iff the operation does.
+// Immutable: never updated, never deleted in normal operation. FK constraints
+// omitted like every other table — relations enforced at the app boundary.
+model AuditLog {
+    id         BigInt    @id @default(autoincrement())
+    tenantId   BigInt
+    actorId    BigInt? // null for system-originated actions
+    actorType  ActorType @default(USER) // which id-space actorId belongs to
+    entityType String
+    entityId   String
+    action     String
+    before     Json? // entity state before the change, when applicable
+    after      Json? // entity state after the change, when applicable
+    requestId  String? // Fastify request id; null for non-HTTP actions
+    occurredAt DateTime @default(now())
+
+    @@index([tenantId, occurredAt])
+    @@index([tenantId, entityType, entityId])
+    @@index([tenantId, actorId])
 }
 
 // Per-tenant document numbering. Unique on (tenantId, code) so each tenant

@@ -34,9 +34,30 @@ services:
       timeout: 5s
       retries: 5
 
+  redis-queue:
+    image: redis:8.6-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass ${QUEUE_REDIS_PASSWORD}
+      --appendonly yes
+      --appendfsync everysec
+    ports:
+      - "${QUEUE_REDIS_PORT}:6379"
+    volumes:
+      - redis_queue_data:/data
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${QUEUE_REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
   redis_data:
+  redis_queue_data:
 
 networks:
   app_network:

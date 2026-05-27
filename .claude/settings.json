@@ -10,6 +10,13 @@
           { "type": "command", "command": ".claude/hooks/block-console-log.sh" },
           { "type": "command", "command": ".claude/hooks/block-raw-process-env.sh" }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": ".claude/hooks/block-ai-attribution.sh" },
+          { "type": "command", "command": ".claude/hooks/warn-untracked-learnings.sh" }
+        ]
       }
     ],
 
