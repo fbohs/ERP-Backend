@@ -7,6 +7,7 @@ import { healthPlugin } from './modules/health/index.js';
 import { authPlugin } from './modules/auth/index.js';
 import { platformPlugin } from './modules/platform/index.js';
 import { usersPlugin } from './modules/users/index.js';
+import { categoriesPlugin } from './modules/categories/index.js';
 import { createDb } from './shared/db/index.js';
 import { createRedis } from './shared/cache/redis.js';
 import { startEmailWorkers } from './workers/email.worker.js';
@@ -123,6 +124,7 @@ export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstanc
     emailQueueUrl: emailEnabled ? queueRedisUrl : null,
     appBaseUrl: config.appBaseUrl,
   });
+  await app.register(categoriesPlugin, { db, redis, queueRedis });
 
   if (queueRedisUrl !== '') {
     await app.register(bullBoardPlugin, {
