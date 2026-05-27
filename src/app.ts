@@ -6,6 +6,7 @@ import { registerErrorHandler } from './shared/errors/handler.js';
 import { healthPlugin } from './modules/health/index.js';
 import { authPlugin } from './modules/auth/index.js';
 import { platformPlugin } from './modules/platform/index.js';
+import { usersPlugin } from './modules/users/index.js';
 import { createDb } from './shared/db/index.js';
 import { createRedis } from './shared/cache/redis.js';
 import { startEmailWorkers } from './workers/email.worker.js';
@@ -114,6 +115,13 @@ export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstanc
     emailQueueUrl: emailEnabled ? queueRedisUrl : null,
     appBaseUrl: config.appBaseUrl,
     ipAllowlist: overrides?.platformIpAllowlist ?? config.platformIpAllowlist,
+  });
+  await app.register(usersPlugin, {
+    db,
+    redis,
+    queueRedis,
+    emailQueueUrl: emailEnabled ? queueRedisUrl : null,
+    appBaseUrl: config.appBaseUrl,
   });
 
   if (queueRedisUrl !== '') {

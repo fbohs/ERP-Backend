@@ -128,6 +128,49 @@ export function tenantWelcomeEmail(opts: {
   );
 }
 
+export function userWelcomeEmail(opts: {
+  name: string;
+  tenantName: string;
+  role: string;
+  email: string;
+  temporaryPassword: string;
+  loginUrl: string;
+}): string {
+  const roleLabel = opts.role
+    .split('_')
+    .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
+    .join(' ');
+
+  const body = `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#18181b;letter-spacing:-0.3px;">Welcome to ${opts.tenantName}</h1>
+    <p style="margin:0 0 0;font-size:15px;color:#52525b;line-height:1.6;">Hi ${opts.name},</p>
+    <p style="margin:12px 0 0;font-size:15px;color:#52525b;line-height:1.6;">
+      Your <strong>${roleLabel}</strong> account on <strong>${opts.tenantName}</strong> has been created.
+      Use the credentials below to sign in for the first time.
+    </p>
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:24px 0 0;background-color:#f4f4f5;border-radius:8px;">
+      <tr>
+        <td style="padding:20px 24px;">
+          <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#71717a;text-transform:uppercase;letter-spacing:0.5px;">Your login details</p>
+          <p style="margin:0 0 6px;font-size:14px;color:#18181b;"><strong>Email:</strong> ${opts.email}</p>
+          <p style="margin:0;font-size:14px;color:#18181b;"><strong>Temporary password:</strong> <span style="font-family:monospace;background:#e4e4e7;padding:2px 6px;border-radius:4px;">${opts.temporaryPassword}</span></p>
+        </td>
+      </tr>
+    </table>
+    ${ctaButton('Sign in to your account', opts.loginUrl)}
+    <p style="margin:20px 0 0;font-size:13px;color:#71717a;text-align:center;">
+      For your security, you will be asked to set a new password on first sign-in.
+    </p>
+    <hr style="margin:28px 0 0;border:none;border-top:1px solid #e4e4e7;" />
+    ${fallbackLink(opts.loginUrl)}
+  `;
+  return shell(
+    `Welcome to ${opts.tenantName}`,
+    `Your ${opts.tenantName} ${roleLabel} account is ready — sign in to get started.`,
+    body,
+  );
+}
+
 export function platformLoginEmail(opts: {
   name: string;
   loginUrl: string;
