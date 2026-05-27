@@ -4,6 +4,8 @@ import type { Userrole } from '../../types/db.js';
 // permission is one line — the union updates with it. Same pattern as
 // generated Userrole in src/types/db.ts.
 const ALL_PERMISSIONS = [
+  // categories
+  'category:write',
   // products
   'product:read',
   'product:write',
