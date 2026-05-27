@@ -40,6 +40,7 @@ const categorySchema = {
     slug: { type: 'string' },
     description: { type: ['string', 'null'] },
     parentId: { type: ['string', 'null'], format: 'uuid' },
+    // isActive is only present for ADMIN callers — omitted from non-admin responses.
     isActive: { type: 'boolean' },
     createdAt: { type: 'string', format: 'date-time' },
     updatedAt: { type: 'string', format: 'date-time' },

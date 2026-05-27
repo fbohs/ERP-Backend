@@ -4,7 +4,7 @@ export interface CategoryView {
   slug: string;
   description: string | null;
   parentId: string | null;
-  isActive: boolean;
+  isActive?: boolean; // only present in admin responses
   createdAt: string;
   updatedAt: string;
 }

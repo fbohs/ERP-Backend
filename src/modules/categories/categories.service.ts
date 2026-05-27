@@ -19,17 +19,18 @@ const AUDIT = {
 
 type CatRow = Awaited<ReturnType<CategoriesRepository['listByTenant']>>[number];
 
-function toView(row: CatRow, parentPublicId: string | null): CategoryView {
-  return {
+function toView(row: CatRow, parentPublicId: string | null, isAdmin: boolean): CategoryView {
+  const view: CategoryView = {
     id: row.publicId,
     name: row.name,
     slug: row.slug,
     description: row.description,
     parentId: parentPublicId,
-    isActive: row.isActive,
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
     updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : String(row.updatedAt),
   };
+  if (isAdmin) view.isActive = row.isActive;
+  return view;
 }
 
 // Builds a map of internalId → direct children from a flat category list.
@@ -107,7 +108,7 @@ export class CategoriesService {
     const idToPublicId = new Map(rows.map((r) => [r.id, r.publicId]));
     const visible = isAdmin ? rows : rows.filter((r) => r.isActive);
     return visible.map((r) =>
-      toView(r, r.parentId !== null ? (idToPublicId.get(r.parentId) ?? null) : null),
+      toView(r, r.parentId !== null ? (idToPublicId.get(r.parentId) ?? null) : null, isAdmin),
     );
   }
 
@@ -121,7 +122,7 @@ export class CategoriesService {
       parentPublicId = parent?.publicId ?? null;
     }
 
-    return toView(row, parentPublicId);
+    return toView(row, parentPublicId, isAdmin);
   }
 
   async getChildren(publicId: string, tenantId: string, isAdmin: boolean): Promise<CategoryView[]> {
@@ -140,7 +141,7 @@ export class CategoriesService {
       const node = queue.shift()!;
       // Non-admin: prune at inactive nodes — skip this node and do not traverse its children.
       if (!isAdmin && !node.isActive) continue;
-      result.push(toView(node, node.parentId !== null ? (idToPublicId.get(node.parentId) ?? null) : null));
+      result.push(toView(node, node.parentId !== null ? (idToPublicId.get(node.parentId) ?? null) : null, isAdmin));
       queue.push(...(childrenMap.get(node.id) ?? []));
     }
 

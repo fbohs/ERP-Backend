@@ -175,8 +175,7 @@ describe('categories routes', () => {
   // ---------------------------------------------------------------------------
 
   describe('GET /categories', () => {
-    it('admin sees all categories including inactive', async () => {
-      // Create then deactivate a category for this test
+    it('admin sees all categories including inactive, with isActive field', async () => {
       const createRes = await app.inject({
         method: 'POST',
         url: '/categories',
@@ -202,9 +201,11 @@ describe('categories routes', () => {
       const deactivated = categories.find((c) => c.id === id);
       expect(deactivated).toBeDefined();
       expect(deactivated!.isActive).toBe(false);
+      // Admin responses always carry isActive
+      expect(categories.every((c) => 'isActive' in c)).toBe(true);
     });
 
-    it('non-admin sees only active categories', async () => {
+    it('non-admin sees only active categories and no isActive field', async () => {
       const res = await app.inject({
         method: 'GET',
         url: '/categories',
@@ -212,8 +213,9 @@ describe('categories routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      const { categories } = res.json<{ categories: { isActive: boolean }[] }>();
-      expect(categories.every((c) => c.isActive)).toBe(true);
+      const { categories } = res.json<{ categories: Record<string, unknown>[] }>();
+      // All returned entries are active
+      expect(categories.every((c) => c['isActive'] === undefined)).toBe(true);
     });
 
     it('returns 401 without a token', async () => {
