@@ -37,9 +37,11 @@ export type Passwordresettokentype = "FIRST_LOGIN_SETUP" | "PASSWORD_RESET";
 
 export type Pricelisttype = "PURCHASE" | "SALES";
 
-export type Productstatus = "ACTIVE" | "ARCHIVED" | "DISCONTINUED" | "DRAFT";
+export type Productstatus = "ARCHIVED" | "DISCONTINUED" | "DRAFT" | "READY";
 
 export type Producttype = "GOODS" | "SERVICE";
+
+export type Productverificationstatus = "APPROVED" | "FLAGGED" | "PENDING_REVIEW" | "REJECTED" | "UNVERIFIED";
 
 export type Purchaseorderstatus = "APPROVED" | "BILLED" | "CANCELLED" | "CLOSED" | "DRAFT" | "PARTIALLY_RECEIVED" | "RECEIVED" | "SENT" | "SUBMITTED";
 
@@ -57,7 +59,7 @@ export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
 export type Transferstatus = "CANCELLED" | "DRAFT" | "IN_TRANSIT" | "RECEIVED";
 
-export type Userrole = "ACCOUNTANT" | "ADMIN" | "INVENTORY_MANAGER" | "PURCHASING_MANAGER" | "SALES_MANAGER" | "VIEWER" | "WAREHOUSE_OPERATOR";
+export type Userrole = "ADMIN" | "CONTENT_MANAGER" | "INVENTORY_MANAGER" | "MERCHANT" | "PRODUCT_VERIFIER" | "PURCHASING_MANAGER" | "REPORT_VIEWER" | "SALES_MANAGER" | "WAREHOUSE_OPERATOR";
 
 export type Warehousetype = "QUARANTINE" | "RETURNS" | "STANDARD" | "TRANSIT" | "VIRTUAL";
 
@@ -283,19 +285,27 @@ export interface Product {
   description: string | null;
   hsnCode: string | null;
   id: Generated<Int8>;
-  images: Generated<string[] | null>;
   isBatchTracked: Generated<boolean>;
+  isPublished: Generated<boolean>;
   isSerialTracked: Generated<boolean>;
   isStockTracked: Generated<boolean>;
+  isSuspendedByOperator: Generated<boolean>;
+  media: Json | null;
+  merchantId: Int8 | null;
   name: string;
   publicId: Generated<string>;
   sku: string;
   slug: string;
+  specs: Json | null;
   status: Generated<Productstatus>;
+  tags: Generated<string[]>;
   tenantId: Int8;
   type: Generated<Producttype>;
   uomId: Int8;
   updatedAt: Generated<Timestamp>;
+  verificationStatus: Generated<Productverificationstatus>;
+  verifiedAt: Timestamp | null;
+  verifiedById: Int8 | null;
   weight: Numeric | null;
   weightUom: string | null;
 }
@@ -333,6 +343,7 @@ export interface ProductSupplier {
 
 export interface ProductVariant {
   barcode: string | null;
+  compareAtPrice: Numeric | null;
   createdAt: Generated<Timestamp>;
   id: Generated<Int8>;
   isActive: Generated<boolean>;
@@ -671,6 +682,7 @@ export interface User {
   phone: string | null;
   publicId: Generated<string>;
   role: Generated<Userrole>;
+  specs: Json | null;
   tenantId: Int8;
   updatedAt: Generated<Timestamp>;
 }

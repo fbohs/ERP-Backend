@@ -81,24 +81,26 @@ export const ROLE_PERMISSIONS: Record<Userrole, ReadonlySet<Permission>> = {
     'warehouse:read',
   ]),
 
-  ACCOUNTANT: new Set<Permission>([
-    'purchase-order:read',
-    'sales-order:read',
-    'supplier:read',
-    'inventory:read',
+  MERCHANT: new Set<Permission>([
     'product:read',
+    'product:write',
+    'inventory:read',
     'price-list:read',
+  ]),
+
+  PRODUCT_VERIFIER: new Set<Permission>([
+    'product:read',
+    'product:write',
     'report:read',
   ]),
 
-  VIEWER: new Set<Permission>([
+  CONTENT_MANAGER: new Set<Permission>([
     'product:read',
-    'inventory:read',
-    'purchase-order:read',
-    'sales-order:read',
-    'supplier:read',
-    'warehouse:read',
-    'price-list:read',
+    'product:write',
+    'report:read',
+  ]),
+
+  REPORT_VIEWER: new Set<Permission>([
     'report:read',
   ]),
 };

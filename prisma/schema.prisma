@@ -41,8 +41,10 @@ enum UserRole {
     PURCHASING_MANAGER
     SALES_MANAGER
     WAREHOUSE_OPERATOR
-    ACCOUNTANT
-    VIEWER
+    MERCHANT
+    PRODUCT_VERIFIER
+    CONTENT_MANAGER
+    REPORT_VIEWER
 }
 
 // Disambiguates AuditLog.actorId, which is a bare BigInt drawn from one of two
@@ -71,9 +73,17 @@ enum ProductType {
 
 enum ProductStatus {
     DRAFT
-    ACTIVE
+    READY
     DISCONTINUED
     ARCHIVED
+}
+
+enum ProductVerificationStatus {
+    UNVERIFIED
+    PENDING_REVIEW
+    APPROVED
+    REJECTED
+    FLAGGED
 }
 
 enum SerialStatus {
@@ -203,9 +213,12 @@ model User {
     phone              String?
     name               String
     password           String
-    role               UserRole @default(VIEWER)
+    role               UserRole @default(REPORT_VIEWER)
     isActive           Boolean  @default(true)
     mustChangePassword Boolean  @default(false)
+    // Prisma `Json` maps to PostgreSQL JSONB — binary storage, supports GIN indexes and @> operators.
+    // Shape is discriminated by role: MERCHANT { merchant: {...} }, PRODUCT_VERIFIER { verifier: {...} }, etc.
+    specs              Json?
 
     createdAt           DateTime             @default(now())
     updatedAt           DateTime             @default(now()) @updatedAt
@@ -479,10 +492,33 @@ model Product {
     isBatchTracked  Boolean @default(false) // requires lot per movement
     isSerialTracked Boolean @default(false) // requires serial per unit
 
-    images    String[] @default([])
     hsnCode   String?  // tax classification (India HSN / global HS code)
     weight    Decimal? @db.Decimal(18, 4)
     weightUom String?  // "KG", "LB"
+
+    // marketplace ownership & visibility
+    // merchantId is a scalar FK to User.id (no Prisma relation — same loose-coupling pattern as createdById).
+    // null = product owned by the tenant/platform operator itself.
+    merchantId            BigInt?
+    isPublished           Boolean                   @default(false) // merchant-controlled publish toggle
+    isSuspendedByOperator Boolean                   @default(false) // tenant admin override — compliance/policy
+    verificationStatus    ProductVerificationStatus @default(UNVERIFIED) // verifier-controlled compliance signal
+    verifiedById          BigInt? // scalar FK to User.id of the verifier — no Prisma relation by design
+    verifiedAt            DateTime?
+
+    // search & discovery — GIN-indexed array (@@index below); supports @> containment queries
+    tags String[] @default([])
+
+    // domain-specific structured metadata. Prisma `Json` = PostgreSQL JSONB (binary, GIN-indexable).
+    // Discriminated by ProductType / domain. e-commerce shape: { seo?: {...}, shipping?: {...} }.
+    // Future domains add their own top-level key without changing this column.
+    // GIN index added via raw SQL in migration (Prisma cannot express jsonb_path_ops operator class).
+    specs Json?
+
+    // ordered media list. Prisma `Json` = PostgreSQL JSONB.
+    // Shape: [{ url, altText, mediaType, sortOrder, isPrimary, variantId? }]
+    // variantId null = product-level gallery; set = variant-specific (matched by ProductVariant.publicId).
+    media Json?
 
     createdAt   DateTime @default(now())
     updatedAt   DateTime @default(now()) @updatedAt
@@ -499,6 +535,10 @@ model Product {
     @@index([tenantId, status])
     @@index([tenantId, categoryId])
     @@index([tenantId, brandId])
+    @@index([tenantId, merchantId])
+    @@index([tenantId, isPublished])
+    @@index([tenantId, verificationStatus])
+    @@index([tags], type: Gin)
 }
 
 // Variant axes — e.g. Size, Color, Material.
@@ -539,9 +579,11 @@ model ProductVariant {
     uomId BigInt // sellable UoM (often same as product)
 
     // listPrice is the fallback default — overridden by PriceListItem rows.
+    // compareAtPrice is the strike-through "was" price shown in storefronts for promotional display.
     // standardCost is for valuation; updated by costing policy (FIFO/MA/STD).
-    listPrice    Decimal  @db.Decimal(18, 4)
-    standardCost Decimal? @db.Decimal(18, 4)
+    listPrice      Decimal  @db.Decimal(18, 4)
+    compareAtPrice Decimal? @db.Decimal(18, 4)
+    standardCost   Decimal? @db.Decimal(18, 4)
 
     weight    Decimal? @db.Decimal(18, 4)
     weightUom String?
