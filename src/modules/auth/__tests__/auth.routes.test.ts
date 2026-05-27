@@ -54,14 +54,14 @@ describe('auth routes', () => {
     const inactiveHash = await argon2.hash('any-password');
     await pool.query(
       `INSERT INTO "User" ("tenantId", email, name, password, role, "isActive")
-       VALUES ($1, 'inactive@acme.com', 'Inactive User', $2, 'VIEWER', false)`,
+       VALUES ($1, 'inactive@acme.com', 'Inactive User', $2, 'REPORT_VIEWER', false)`,
       [tenantId, inactiveHash],
     );
 
     const resetHash = await argon2.hash('reset-original-password');
     await pool.query(
       `INSERT INTO "User" ("tenantId", email, name, password, role)
-       VALUES ($1, 'reset@acme.com', 'Reset User', $2, 'VIEWER')`,
+       VALUES ($1, 'reset@acme.com', 'Reset User', $2, 'REPORT_VIEWER')`,
       [tenantId, resetHash],
     );
 
