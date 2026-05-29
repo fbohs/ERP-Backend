@@ -21,6 +21,10 @@ export const config = {
   // Comma-separated exact IPs and IPv4 CIDR ranges allowed to reach /platform.
   // Empty = fail-closed (deny all). See ADR 0002.
   platformIpAllowlist: process.env['PLATFORM_IP_ALLOWLIST'] ?? '',
+  awsRegion: process.env['AWS_REGION'] ?? 'ap-south-1',
+  awsS3Bucket: process.env['AWS_S3_BUCKET'] ?? '',
+  awsAccessKeyId: process.env['AWS_ACCESS_KEY_ID'] ?? '',
+  awsSecretAccessKey: process.env['AWS_SECRET_ACCESS_KEY'] ?? '',
   sessionTtlSeconds: 28_800,            // 8 hours, absolute expiry
   passwordResetTtlSeconds: 1_800,       // 30 minutes
   firstLoginSetupTtlSeconds: 900,       // 15 minutes — minted at login, user is active
