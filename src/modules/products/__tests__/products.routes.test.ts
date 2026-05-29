@@ -1,5 +1,13 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 
+vi.mock('../../../shared/storage/index.js', () => ({
+  generatePresignedPutUrl: vi.fn(),
+  getObjectMeta: vi.fn(),
+  buildObjectUrl: vi.fn(),
+  isAllowedMimeType: (v: string) => ['image/jpeg', 'image/png', 'image/webp'].includes(v),
+  PRESIGN_TTL_SECONDS: 86400,
+  MAX_IMAGE_SIZE_BYTES: 5 * 1024 * 1024,
+}));
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 import { Pool } from 'pg';
@@ -9,7 +17,8 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../../../app.js';
-import type { ProductView, ProductListView } from '../products.types.js';
+import type { ProductView, ProductListView, PresignImageView } from '../products.types.js';
+import * as storage from '../../../shared/storage/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.resolve(__dirname, '../../../../prisma/migrations');
@@ -715,6 +724,304 @@ describe('products routes', () => {
       expect(first.statusCode).toBe(201);
       expect(second.statusCode).toBe(201);
       expect(second.json<ProductView>().id).toBe(first.json<ProductView>().id);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // POST /products/:id/images/presign
+  // ---------------------------------------------------------------------------
+
+  describe('POST /products/:id/images/presign', () => {
+    let productId: string;
+    const fakeUploadUrl = 'https://bucket.s3.amazonaws.com/products/fake-key.jpg?X-Amz-Signature=abc';
+    const fakeExpiresAt = new Date(Date.now() + 86400 * 1000).toISOString();
+
+    beforeAll(async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/products',
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { name: 'Image Test Product', sku: 'IMG-001', categoryId, uomCode: 'EA', listPrice: '10.00' },
+      });
+      productId = res.json<ProductView>().id;
+    });
+
+    beforeEach(() => { vi.clearAllMocks(); });
+
+    it('returns presigned upload URL for valid mimeType', async () => {
+      vi.mocked(storage.generatePresignedPutUrl).mockResolvedValueOnce({
+        s3Key: `products/${productId}/generated-uuid.jpg`,
+        uploadUrl: fakeUploadUrl,
+        expiresAt: new Date(fakeExpiresAt),
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/products/${productId}/images/presign`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { mimeType: 'image/jpeg' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json<PresignImageView>();
+      // Service generates the s3Key itself; verify shape not exact value
+      expect(body.s3Key).toMatch(new RegExp(`^products/${productId}/[\\w-]+\\.jpg$`));
+      expect(body.uploadUrl).toBe(fakeUploadUrl);
+      expect(body.expiresAt).toBeDefined();
+    });
+
+    it('returns presigned URL for image/png and image/webp', async () => {
+      for (const mimeType of ['image/png', 'image/webp']) {
+        vi.mocked(storage.generatePresignedPutUrl).mockResolvedValueOnce({
+          s3Key: `products/${productId}/uuid.${mimeType.split('/')[1]}`,
+          uploadUrl: fakeUploadUrl,
+          expiresAt: new Date(fakeExpiresAt),
+        });
+
+        const res = await app.inject({
+          method: 'POST',
+          url: `/products/${productId}/images/presign`,
+          headers: { authorization: `Bearer ${adminToken}` },
+          payload: { mimeType },
+        });
+        expect(res.statusCode).toBe(200);
+      }
+    });
+
+    it('returns 422 for disallowed mimeType', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/products/${productId}/images/presign`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { mimeType: 'image/gif' },
+      });
+      expect(res.statusCode).toBe(422);
+    });
+
+    it('returns 404 for unknown product', async () => {
+      vi.mocked(storage.generatePresignedPutUrl).mockResolvedValueOnce({
+        s3Key: 'products/00000000-0000-0000-0000-000000000000/uuid.jpg',
+        uploadUrl: fakeUploadUrl,
+        expiresAt: new Date(fakeExpiresAt),
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/products/00000000-0000-0000-0000-000000000000/images/presign',
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { mimeType: 'image/jpeg' },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 403 for REPORT_VIEWER', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/products/${productId}/images/presign`,
+        headers: { authorization: `Bearer ${reportViewerToken}` },
+        payload: { mimeType: 'image/jpeg' },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('replays the same presign response on retry with same Idempotency-Key', async () => {
+      vi.mocked(storage.generatePresignedPutUrl).mockResolvedValueOnce({
+        s3Key: `products/${productId}/idem-key.jpg`,
+        uploadUrl: fakeUploadUrl,
+        expiresAt: new Date(fakeExpiresAt),
+      });
+
+      const key = `presign-idem-${Date.now()}`;
+      const first = await app.inject({
+        method: 'POST',
+        url: `/products/${productId}/images/presign`,
+        headers: { authorization: `Bearer ${adminToken}`, 'idempotency-key': key },
+        payload: { mimeType: 'image/jpeg' },
+      });
+      const second = await app.inject({
+        method: 'POST',
+        url: `/products/${productId}/images/presign`,
+        headers: { authorization: `Bearer ${adminToken}`, 'idempotency-key': key },
+        payload: { mimeType: 'image/jpeg' },
+      });
+
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(200);
+      // Second call must replay — generatePresignedPutUrl called exactly once
+      expect(vi.mocked(storage.generatePresignedPutUrl)).toHaveBeenCalledTimes(1);
+      expect(second.json<PresignImageView>().s3Key).toBe(first.json<PresignImageView>().s3Key);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // POST /products/:id/images/confirm
+  // ---------------------------------------------------------------------------
+
+  describe('POST /products/:id/images/confirm', () => {
+    let productId: string;
+
+    beforeAll(async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/products',
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { name: 'Confirm Image Product', sku: 'CONF-IMG-001', categoryId, uomCode: 'EA', listPrice: '10.00' },
+      });
+      productId = res.json<ProductView>().id;
+    });
+
+    beforeEach(() => { vi.clearAllMocks(); });
+
+    it('confirms upload and appends image to product media', async () => {
+      const s3Key = `products/${productId}/some-uuid.jpg`;
+      vi.mocked(storage.getObjectMeta).mockResolvedValueOnce({ sizeBytes: 1024 * 100, contentType: 'image/jpeg' });
+      vi.mocked(storage.buildObjectUrl).mockReturnValueOnce(`https://bucket.s3.amazonaws.com/${s3Key}`);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/products/${productId}/images/confirm`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { s3Key, altText: 'Front view' },
+      });
+
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('first confirmed image is isPrimary=true in the DB', async () => {
+      const row = await pool.query<{ media: unknown }>(
+        `SELECT media FROM "Product" WHERE "publicId" = $1`,
+        [productId],
+      );
+      const media = row.rows[0]!.media as Array<{ isPrimary: boolean; sortOrder: number; altText: string }>;
+      expect(Array.isArray(media)).toBe(true);
+      expect(media[0]!.isPrimary).toBe(true);
+      expect(media[0]!.sortOrder).toBe(0);
+      expect(media[0]!.altText).toBe('Front view');
+    });
+
+    it('second confirmed image gets isPrimary=false and sortOrder=1', async () => {
+      const s3Key = `products/${productId}/second-uuid.png`;
+      vi.mocked(storage.getObjectMeta).mockResolvedValueOnce({ sizeBytes: 512 * 1024, contentType: 'image/png' });
+      vi.mocked(storage.buildObjectUrl).mockReturnValueOnce(`https://bucket.s3.amazonaws.com/${s3Key}`);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/products/${productId}/images/confirm`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { s3Key },
+      });
+      expect(res.statusCode).toBe(200);
+
+      const row = await pool.query<{ media: unknown }>(
+        `SELECT media FROM "Product" WHERE "publicId" = $1`,
+        [productId],
+      );
+      const media = row.rows[0]!.media as Array<{ isPrimary: boolean; sortOrder: number }>;
+      expect(media).toHaveLength(2);
+      expect(media[1]!.isPrimary).toBe(false);
+      expect(media[1]!.sortOrder).toBe(1);
+    });
+
+    it('writes audit log with action product.image_confirmed', async () => {
+      const audit = await pool.query<{ action: string }>(
+        `SELECT action FROM "AuditLog" WHERE action = 'product.image_confirmed' ORDER BY id DESC LIMIT 1`,
+      );
+      expect(audit.rows[0]!.action).toBe('product.image_confirmed');
+    });
+
+    it('returns 422 when object is not in S3 yet', async () => {
+      const s3Key = `products/${productId}/not-uploaded.jpg`;
+      vi.mocked(storage.getObjectMeta).mockResolvedValueOnce(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/products/${productId}/images/confirm`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { s3Key },
+      });
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json<{ error: { code: string } }>().error.code).toBe('PRODUCT_IMAGE_NOT_UPLOADED');
+    });
+
+    it('returns 422 when object exceeds 5 MB', async () => {
+      const s3Key = `products/${productId}/too-large.jpg`;
+      vi.mocked(storage.getObjectMeta).mockResolvedValueOnce({
+        sizeBytes: 6 * 1024 * 1024,
+        contentType: 'image/jpeg',
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/products/${productId}/images/confirm`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { s3Key },
+      });
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json<{ error: { code: string } }>().error.code).toBe('PRODUCT_IMAGE_TOO_LARGE');
+    });
+
+    it('returns 422 when s3Key does not belong to this product', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/products/${productId}/images/confirm`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { s3Key: 'products/other-product-id/uuid.jpg' },
+      });
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json<{ error: { code: string } }>().error.code).toBe('PRODUCT_IMAGE_KEY_MISMATCH');
+    });
+
+    it('returns 404 for unknown product', async () => {
+      const fakeId = '00000000-0000-0000-0000-000000000000';
+      const s3Key = `products/${fakeId}/uuid.jpg`;
+      vi.mocked(storage.getObjectMeta).mockResolvedValueOnce({ sizeBytes: 100, contentType: 'image/jpeg' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/products/${fakeId}/images/confirm`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { s3Key },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 403 for REPORT_VIEWER', async () => {
+      const s3Key = `products/${productId}/uuid.jpg`;
+      const res = await app.inject({
+        method: 'POST',
+        url: `/products/${productId}/images/confirm`,
+        headers: { authorization: `Bearer ${reportViewerToken}` },
+        payload: { s3Key },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('replays confirm response on retry with same Idempotency-Key', async () => {
+      const s3Key = `products/${productId}/idem-uuid.webp`;
+      vi.mocked(storage.getObjectMeta).mockResolvedValueOnce({ sizeBytes: 200, contentType: 'image/webp' });
+      vi.mocked(storage.buildObjectUrl).mockReturnValueOnce(`https://bucket.s3.amazonaws.com/${s3Key}`);
+
+      const key = `confirm-idem-${Date.now()}`;
+      const first = await app.inject({
+        method: 'POST',
+        url: `/products/${productId}/images/confirm`,
+        headers: { authorization: `Bearer ${adminToken}`, 'idempotency-key': key },
+        payload: { s3Key },
+      });
+      const second = await app.inject({
+        method: 'POST',
+        url: `/products/${productId}/images/confirm`,
+        headers: { authorization: `Bearer ${adminToken}`, 'idempotency-key': key },
+        payload: { s3Key },
+      });
+
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(200);
+      // getObjectMeta called exactly once — second call is a Redis replay
+      expect(vi.mocked(storage.getObjectMeta)).toHaveBeenCalledTimes(1);
     });
   });
 });
