@@ -713,4 +713,62 @@ export const productsPlugin: FastifyPluginAsync<ProductsPluginOptions> = async (
   );
 
   // ---------------------------------------------------------------------------
+  // PUT /products/:id/images/reorder
+  // ---------------------------------------------------------------------------
+  app.put(
+    '/products/:id/images/reorder',
+    {
+      schema: {
+        tags: ['Products'],
+        summary: 'Reorder product images',
+        description:
+          'Sets the display order of all existing product images. ' +
+          's3Keys must include every existing image s3Key — partial lists are rejected. ' +
+          'Array position maps directly to sortOrder (index 0 = first). ' +
+          'isPrimary is preserved — reorder does not change which image is primary.',
+        security: [{ bearerAuth: [] }],
+        headers: {
+          type: 'object',
+          properties: { 'idempotency-key': { type: 'string' } },
+        },
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: { id: { type: 'string', format: 'uuid' } },
+        },
+        body: {
+          type: 'object',
+          required: ['s3Keys'],
+          properties: {
+            s3Keys: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 10,
+              items: { type: 'string', minLength: 1 },
+            },
+          },
+        },
+        response: {
+          200: productSchema,
+          401: { ...errorSchema, description: 'Missing or invalid session' },
+          403: { ...errorSchema, description: 'Insufficient permissions' },
+          404: { ...errorSchema, description: 'Product not found' },
+          422: {
+            ...errorSchema,
+            description: 'PRODUCT_IMAGE_REORDER_MISMATCH — list length or keys do not match existing media',
+          },
+        },
+      },
+      preHandler: [idempotency.before, authenticate, authorize('product:write')],
+      onSend: [idempotency.after],
+    },
+    async (request, reply) => {
+      const params = ProductParamsSchema.safeParse(request.params);
+      if (!params.success) throw new ValidationError('Invalid product id');
+
+      const body = request.body as { s3Keys: string[] };
+      const result = await service.reorderImages(params.data.id, body.s3Keys, request.user, request.id);
+      return reply.status(200).send(result);
+    },
+  );
 };

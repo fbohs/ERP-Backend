@@ -1201,4 +1201,162 @@ describe('products routes', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // PUT /products/:id/images/reorder
+  // ---------------------------------------------------------------------------
+
+  describe('PUT /products/:id/images/reorder', () => {
+    let productId: string;
+    let key1: string;
+    let key2: string;
+    let key3: string;
+
+    beforeAll(async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/products',
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { name: 'Reorder Image Product', sku: 'REORDER-IMG-001', categoryId, uomCode: 'EA', listPrice: '5.00' },
+      });
+      productId = res.json<ProductView>().id;
+
+      key1 = `products/${productId}/img-1.jpg`;
+      key2 = `products/${productId}/img-2.png`;
+      key3 = `products/${productId}/img-3.webp`;
+
+      // Seed 3 images: key1 is primary
+      vi.mocked(storage.getObjectMeta)
+        .mockResolvedValueOnce({ sizeBytes: 100, contentType: 'image/jpeg' })
+        .mockResolvedValueOnce({ sizeBytes: 200, contentType: 'image/png' })
+        .mockResolvedValueOnce({ sizeBytes: 300, contentType: 'image/webp' });
+      vi.mocked(storage.buildObjectUrl)
+        .mockReturnValueOnce(`https://bucket.s3.amazonaws.com/${key1}`)
+        .mockReturnValueOnce(`https://bucket.s3.amazonaws.com/${key2}`)
+        .mockReturnValueOnce(`https://bucket.s3.amazonaws.com/${key3}`);
+
+      await app.inject({
+        method: 'POST',
+        url: `/products/${productId}/images/confirm`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: {
+          images: {
+            primary: { s3Key: key1, altText: 'First' },
+            others: [{ s3Key: key2, altText: 'Second' }, { s3Key: key3, altText: 'Third' }],
+          },
+        },
+      });
+    });
+
+    beforeEach(() => { vi.clearAllMocks(); });
+
+    it('reorders images and updates sortOrder', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/products/${productId}/images/reorder`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { s3Keys: [key3, key1, key2] },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const media = res.json<ProductView>().media;
+      expect(media).toHaveLength(3);
+      expect(media[0]!.s3Key).toBe(key3);
+      expect(media[0]!.sortOrder).toBe(0);
+      expect(media[1]!.s3Key).toBe(key1);
+      expect(media[1]!.sortOrder).toBe(1);
+      expect(media[2]!.s3Key).toBe(key2);
+      expect(media[2]!.sortOrder).toBe(2);
+    });
+
+    it('isPrimary is unchanged after reorder', async () => {
+      const media = (await app.inject({
+        method: 'PUT',
+        url: `/products/${productId}/images/reorder`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { s3Keys: [key2, key3, key1] },
+      })).json<ProductView>().media;
+
+      const primaries = media.filter((m) => m.isPrimary);
+      expect(primaries).toHaveLength(1);
+      expect(primaries[0]!.s3Key).toBe(key1);
+    });
+
+    it('writes audit log with action product.images_reordered', async () => {
+      await app.inject({
+        method: 'PUT',
+        url: `/products/${productId}/images/reorder`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { s3Keys: [key1, key2, key3] },
+      });
+
+      const audit = await pool.query<{ action: string }>(
+        `SELECT action FROM "AuditLog" WHERE action = 'product.images_reordered' ORDER BY id DESC LIMIT 1`,
+      );
+      expect(audit.rows[0]!.action).toBe('product.images_reordered');
+    });
+
+    it('returns 422 PRODUCT_IMAGE_REORDER_MISMATCH when list length differs', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/products/${productId}/images/reorder`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { s3Keys: [key1, key2] },
+      });
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json<{ error: { code: string } }>().error.code).toBe('PRODUCT_IMAGE_REORDER_MISMATCH');
+    });
+
+    it('returns 422 PRODUCT_IMAGE_REORDER_MISMATCH when a key is not found in existing media', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/products/${productId}/images/reorder`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { s3Keys: [key1, key2, `products/${productId}/ghost.jpg`] },
+      });
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json<{ error: { code: string } }>().error.code).toBe('PRODUCT_IMAGE_REORDER_MISMATCH');
+    });
+
+    it('returns 404 for unknown product', async () => {
+      const fakeId = '00000000-0000-0000-0000-000000000000';
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/products/${fakeId}/images/reorder`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { s3Keys: [`products/${fakeId}/img.jpg`] },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 403 for REPORT_VIEWER', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/products/${productId}/images/reorder`,
+        headers: { authorization: `Bearer ${reportViewerToken}` },
+        payload: { s3Keys: [key1, key2, key3] },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('replays reorder response on retry with same Idempotency-Key', async () => {
+      const key = `reorder-idem-${Date.now()}`;
+      const first = await app.inject({
+        method: 'PUT',
+        url: `/products/${productId}/images/reorder`,
+        headers: { authorization: `Bearer ${adminToken}`, 'idempotency-key': key },
+        payload: { s3Keys: [key3, key2, key1] },
+      });
+      const second = await app.inject({
+        method: 'PUT',
+        url: `/products/${productId}/images/reorder`,
+        headers: { authorization: `Bearer ${adminToken}`, 'idempotency-key': key },
+        payload: { s3Keys: [key3, key2, key1] },
+      });
+
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(200);
+      expect(first.json<ProductView>().media[0]!.s3Key).toBe(second.json<ProductView>().media[0]!.s3Key);
+    });
+  });
 });

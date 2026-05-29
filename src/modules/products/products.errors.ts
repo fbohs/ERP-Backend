@@ -40,6 +40,10 @@ export class ProductImagePrimaryRequiredError extends ValidationError {
   override readonly code = 'PRODUCT_IMAGE_PRIMARY_REQUIRED';
 }
 
+export class ProductImageReorderMismatchError extends ValidationError {
+  override readonly code = 'PRODUCT_IMAGE_REORDER_MISMATCH';
+}
+
 export class ProductImageNotFoundError extends ValidationError {
   override readonly code = 'PRODUCT_IMAGE_NOT_FOUND';
 }

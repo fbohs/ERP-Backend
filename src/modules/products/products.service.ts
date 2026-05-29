@@ -11,6 +11,7 @@ import {
   ProductImageTooLargeError,
   ProductImageKeyMismatchError,
   ProductImagePrimaryRequiredError,
+  ProductImageReorderMismatchError,
   ProductImageNotFoundError,
 } from './products.errors.js';
 import { ForbiddenError } from '../../shared/errors/base.js';
@@ -37,6 +38,7 @@ const AUDIT = {
   suspended: 'product.suspended',
   unsuspended: 'product.unsuspended',
   imagesConfirmed: 'product.images_confirmed',
+  imagesReordered: 'product.images_reordered',
   imagePrimarySet: 'product.image_primary_set',
 } as const;
 
@@ -516,6 +518,52 @@ export class ProductsService {
     });
 
     logger.info({ productPublicId, added: allNew.length }, 'product.images_confirmed');
+    return this.get(productPublicId, actor.tenantId, actor.role === 'ADMIN');
+  }
+
+  async reorderImages(
+    productPublicId: string,
+    s3Keys: string[],
+    actor: ProductActor,
+    requestId: string,
+  ): Promise<ProductView> {
+    const row = await this.repo.findProductMedia(productPublicId, actor.tenantId);
+    if (!row) throw new ProductNotFoundError('Product not found');
+
+    const existing: MediaEntry[] = Array.isArray(row.media) ? (row.media as unknown as MediaEntry[]) : [];
+
+    if (s3Keys.length !== existing.length) {
+      throw new ProductImageReorderMismatchError(
+        `Reorder list must include all ${existing.length} existing image(s); got ${s3Keys.length}`,
+      );
+    }
+
+    const byKey = new Map(existing.map((e) => [e.s3Key, e]));
+    for (const key of s3Keys) {
+      if (!byKey.has(key)) {
+        throw new ProductImageReorderMismatchError(`s3Key not found in product media: ${key}`);
+      }
+    }
+
+    const reordered: MediaEntry[] = s3Keys.map((key, idx) => ({
+      ...byKey.get(key)!,
+      sortOrder: idx,
+    }));
+
+    await this.db.transaction().execute(async (tx) => {
+      await this.repo.withTx(tx).setMedia(row.id, reordered);
+      await this.audit.withTx(tx).record({
+        tenantId: actor.tenantId,
+        actorId: actor.userId,
+        entityType: 'Product',
+        entityId: productPublicId,
+        action: AUDIT.imagesReordered,
+        after: { order: s3Keys },
+        requestId,
+      });
+    });
+
+    logger.info({ productPublicId }, 'product.images_reordered');
     return this.get(productPublicId, actor.tenantId, actor.role === 'ADMIN');
   }
 
