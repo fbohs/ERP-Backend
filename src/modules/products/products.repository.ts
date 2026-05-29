@@ -105,7 +105,7 @@ export class ProductsRepository {
       .selectFrom('Product')
       .innerJoin('Category', 'Category.id', 'Product.categoryId')
       .innerJoin('UnitOfMeasure', 'UnitOfMeasure.id', 'Product.uomId')
-      .select([...PRODUCT_COLS, 'Category.publicId as categoryPublicId', 'UnitOfMeasure.code as uomCode'])
+      .select([...PRODUCT_COLS, 'Category.publicId as categoryPublicId', 'UnitOfMeasure.code as uomCode', 'Product.media'])
       .where('Product.publicId', '=', publicId)
       .where('Product.tenantId', '=', tenantId)
       .executeTakeFirst();

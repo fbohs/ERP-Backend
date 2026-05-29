@@ -35,3 +35,7 @@ export class ProductImageTooLargeError extends ValidationError {
 export class ProductImageKeyMismatchError extends ValidationError {
   override readonly code = 'PRODUCT_IMAGE_KEY_MISMATCH';
 }
+
+export class ProductImagePrimaryRequiredError extends ValidationError {
+  override readonly code = 'PRODUCT_IMAGE_PRIMARY_REQUIRED';
+}

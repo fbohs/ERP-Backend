@@ -74,11 +74,24 @@ const productListSchema = {
   },
 } as const;
 
+const mediaEntrySchema = {
+  type: 'object',
+  properties: {
+    s3Key: { type: 'string' },
+    url: { type: 'string' },
+    altText: { type: ['string', 'null'] },
+    mediaType: { type: 'string' },
+    sortOrder: { type: 'number' },
+    isPrimary: { type: 'boolean' },
+  },
+} as const;
+
 const productSchema = {
   ...productListSchema,
   properties: {
     ...productListSchema.properties,
     variants: { type: 'array', items: variantSchema },
+    media: { type: 'array', items: mediaEntrySchema },
   },
 } as const;
 
@@ -553,11 +566,13 @@ export const productsPlugin: FastifyPluginAsync<ProductsPluginOptions> = async (
     {
       schema: {
         tags: ['Products'],
-        summary: 'Confirm a product image upload and persist it',
+        summary: 'Confirm one or more product image uploads and persist them',
         description:
-          'Verifies the object exists in S3 (max 5 MB), then appends it to the product media list. ' +
-          'Use the s3Key returned by POST /products/:id/images/presign. ' +
-          'Send the s3Key as the Idempotency-Key to make this safe to retry.',
+          'Verifies each s3Key exists in S3 (max 5 MB each) and appends the images to the product media list. ' +
+          'images.primary designates the new primary image and demotes any existing one. ' +
+          'images.primary is required if the product has no existing images. ' +
+          'images.others are appended in array order after images.primary. ' +
+          'sortOrder is derived from array position — do not send it explicitly.',
         security: [{ bearerAuth: [] }],
         headers: {
           type: 'object',
@@ -570,10 +585,33 @@ export const productsPlugin: FastifyPluginAsync<ProductsPluginOptions> = async (
         },
         body: {
           type: 'object',
-          required: ['s3Key'],
+          required: ['images'],
           properties: {
-            s3Key: { type: 'string', minLength: 1 },
-            altText: { type: 'string', maxLength: 255 },
+            images: {
+              type: 'object',
+              properties: {
+                primary: {
+                  type: 'object',
+                  required: ['s3Key'],
+                  properties: {
+                    s3Key: { type: 'string', minLength: 1 },
+                    altText: { type: ['string', 'null'], maxLength: 255 },
+                  },
+                },
+                others: {
+                  type: 'array',
+                  maxItems: 9,
+                  items: {
+                    type: 'object',
+                    required: ['s3Key'],
+                    properties: {
+                      s3Key: { type: 'string', minLength: 1 },
+                      altText: { type: ['string', 'null'], maxLength: 255 },
+                    },
+                  },
+                },
+              },
+            },
           },
         },
         response: {
@@ -584,7 +622,7 @@ export const productsPlugin: FastifyPluginAsync<ProductsPluginOptions> = async (
           422: {
             ...errorSchema,
             description:
-              'PRODUCT_IMAGE_NOT_UPLOADED | PRODUCT_IMAGE_TOO_LARGE | PRODUCT_IMAGE_KEY_MISMATCH',
+              'PRODUCT_IMAGE_NOT_UPLOADED | PRODUCT_IMAGE_TOO_LARGE | PRODUCT_IMAGE_KEY_MISMATCH | PRODUCT_IMAGE_PRIMARY_REQUIRED',
           },
         },
       },
@@ -594,15 +632,30 @@ export const productsPlugin: FastifyPluginAsync<ProductsPluginOptions> = async (
     async (request, reply) => {
       const params = ProductParamsSchema.safeParse(request.params);
       if (!params.success) throw new ValidationError('Invalid product id');
-      const body = request.body as { s3Key: string; altText?: string };
-      const result = await service.confirmImageUpload(
+
+      const body = request.body as {
+        images: {
+          primary?: { s3Key: string; altText?: string | null };
+          others?: Array<{ s3Key: string; altText?: string | null }>;
+        };
+      };
+
+      const result = await service.confirmImages(
         params.data.id,
-        body.s3Key,
-        body.altText ?? null,
+        {
+          ...(body.images.primary
+            ? { primary: { s3Key: body.images.primary.s3Key, altText: body.images.primary.altText ?? null } }
+            : {}),
+          others: (body.images.others ?? []).map((o) => ({
+            s3Key: o.s3Key,
+            altText: o.altText ?? null,
+          })),
+        },
         request.user,
         request.id,
       );
       return reply.status(200).send(result);
     },
   );
+
 };

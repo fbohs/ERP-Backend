@@ -872,102 +872,134 @@ describe('products routes', () => {
 
     beforeEach(() => { vi.clearAllMocks(); });
 
-    it('confirms upload and appends image to product media', async () => {
-      const s3Key = `products/${productId}/some-uuid.jpg`;
-      vi.mocked(storage.getObjectMeta).mockResolvedValueOnce({ sizeBytes: 1024 * 100, contentType: 'image/jpeg' });
+    it('returns 422 PRODUCT_IMAGE_PRIMARY_REQUIRED when no existing images and primary is absent', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/products/${productId}/images/confirm`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { images: { others: [{ s3Key: `products/${productId}/a.jpg` }] } },
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json<{ error: { code: string } }>().error.code).toBe('PRODUCT_IMAGE_PRIMARY_REQUIRED');
+    });
+
+    it('confirms primary only — sets isPrimary=true, sortOrder=0, stores s3Key', async () => {
+      const s3Key = `products/${productId}/primary-uuid.jpg`;
+      vi.mocked(storage.getObjectMeta).mockResolvedValueOnce({ sizeBytes: 100 * 1024, contentType: 'image/jpeg' });
       vi.mocked(storage.buildObjectUrl).mockReturnValueOnce(`https://bucket.s3.amazonaws.com/${s3Key}`);
 
       const res = await app.inject({
         method: 'POST',
         url: `/products/${productId}/images/confirm`,
         headers: { authorization: `Bearer ${adminToken}` },
-        payload: { s3Key, altText: 'Front view' },
+        payload: { images: { primary: { s3Key, altText: 'Front view' } } },
       });
 
       expect(res.statusCode).toBe(200);
+      const body = res.json<ProductView>();
+      expect(body.media).toHaveLength(1);
+      expect(body.media[0]!.isPrimary).toBe(true);
+      expect(body.media[0]!.sortOrder).toBe(0);
+      expect(body.media[0]!.s3Key).toBe(s3Key);
+      expect(body.media[0]!.altText).toBe('Front view');
     });
 
-    it('first confirmed image is isPrimary=true in the DB', async () => {
-      const row = await pool.query<{ media: unknown }>(
-        `SELECT media FROM "Product" WHERE "publicId" = $1`,
-        [productId],
-      );
-      const media = row.rows[0]!.media as Array<{ isPrimary: boolean; sortOrder: number; altText: string }>;
-      expect(Array.isArray(media)).toBe(true);
-      expect(media[0]!.isPrimary).toBe(true);
-      expect(media[0]!.sortOrder).toBe(0);
-      expect(media[0]!.altText).toBe('Front view');
-    });
-
-    it('second confirmed image gets isPrimary=false and sortOrder=1', async () => {
-      const s3Key = `products/${productId}/second-uuid.png`;
-      vi.mocked(storage.getObjectMeta).mockResolvedValueOnce({ sizeBytes: 512 * 1024, contentType: 'image/png' });
-      vi.mocked(storage.buildObjectUrl).mockReturnValueOnce(`https://bucket.s3.amazonaws.com/${s3Key}`);
+    it('confirms primary + others — sortOrder follows array position, others are not primary', async () => {
+      const otherS3Key1 = `products/${productId}/other-uuid-1.png`;
+      const otherS3Key2 = `products/${productId}/other-uuid-2.webp`;
+      // product already has 1 image from previous test; baseOrder = 1
+      vi.mocked(storage.getObjectMeta)
+        .mockResolvedValueOnce({ sizeBytes: 50 * 1024, contentType: 'image/png' })
+        .mockResolvedValueOnce({ sizeBytes: 60 * 1024, contentType: 'image/webp' });
+      vi.mocked(storage.buildObjectUrl)
+        .mockReturnValueOnce(`https://bucket.s3.amazonaws.com/${otherS3Key1}`)
+        .mockReturnValueOnce(`https://bucket.s3.amazonaws.com/${otherS3Key2}`);
 
       const res = await app.inject({
         method: 'POST',
         url: `/products/${productId}/images/confirm`,
         headers: { authorization: `Bearer ${adminToken}` },
-        payload: { s3Key },
+        payload: {
+          images: {
+            others: [
+              { s3Key: otherS3Key1, altText: 'Side view' },
+              { s3Key: otherS3Key2 },
+            ],
+          },
+        },
       });
-      expect(res.statusCode).toBe(200);
 
-      const row = await pool.query<{ media: unknown }>(
-        `SELECT media FROM "Product" WHERE "publicId" = $1`,
-        [productId],
-      );
-      const media = row.rows[0]!.media as Array<{ isPrimary: boolean; sortOrder: number }>;
-      expect(media).toHaveLength(2);
-      expect(media[1]!.isPrimary).toBe(false);
-      expect(media[1]!.sortOrder).toBe(1);
+      expect(res.statusCode).toBe(200);
+      const body = res.json<ProductView>();
+      expect(body.media).toHaveLength(3);
+      expect(body.media[1]!.s3Key).toBe(otherS3Key1);
+      expect(body.media[1]!.sortOrder).toBe(1);
+      expect(body.media[1]!.isPrimary).toBe(false);
+      expect(body.media[2]!.s3Key).toBe(otherS3Key2);
+      expect(body.media[2]!.sortOrder).toBe(2);
+      expect(body.media[2]!.isPrimary).toBe(false);
     });
 
-    it('writes audit log with action product.image_confirmed', async () => {
+    it('providing a new primary demotes the existing primary', async () => {
+      const newPrimaryKey = `products/${productId}/new-primary.jpg`;
+      vi.mocked(storage.getObjectMeta).mockResolvedValueOnce({ sizeBytes: 80 * 1024, contentType: 'image/jpeg' });
+      vi.mocked(storage.buildObjectUrl).mockReturnValueOnce(`https://bucket.s3.amazonaws.com/${newPrimaryKey}`);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/products/${productId}/images/confirm`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { images: { primary: { s3Key: newPrimaryKey } } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const media = res.json<ProductView>().media;
+      const primaries = media.filter((m) => m.isPrimary);
+      expect(primaries).toHaveLength(1);
+      expect(primaries[0]!.s3Key).toBe(newPrimaryKey);
+    });
+
+    it('writes audit log with action product.images_confirmed', async () => {
       const audit = await pool.query<{ action: string }>(
-        `SELECT action FROM "AuditLog" WHERE action = 'product.image_confirmed' ORDER BY id DESC LIMIT 1`,
+        `SELECT action FROM "AuditLog" WHERE action = 'product.images_confirmed' ORDER BY id DESC LIMIT 1`,
       );
-      expect(audit.rows[0]!.action).toBe('product.image_confirmed');
+      expect(audit.rows[0]!.action).toBe('product.images_confirmed');
     });
 
-    it('returns 422 when object is not in S3 yet', async () => {
-      const s3Key = `products/${productId}/not-uploaded.jpg`;
+    it('returns 422 PRODUCT_IMAGE_NOT_UPLOADED when object is not in S3', async () => {
       vi.mocked(storage.getObjectMeta).mockResolvedValueOnce(null);
 
       const res = await app.inject({
         method: 'POST',
         url: `/products/${productId}/images/confirm`,
         headers: { authorization: `Bearer ${adminToken}` },
-        payload: { s3Key },
+        payload: { images: { primary: { s3Key: `products/${productId}/not-uploaded.jpg` } } },
       });
 
       expect(res.statusCode).toBe(422);
       expect(res.json<{ error: { code: string } }>().error.code).toBe('PRODUCT_IMAGE_NOT_UPLOADED');
     });
 
-    it('returns 422 when object exceeds 5 MB', async () => {
-      const s3Key = `products/${productId}/too-large.jpg`;
-      vi.mocked(storage.getObjectMeta).mockResolvedValueOnce({
-        sizeBytes: 6 * 1024 * 1024,
-        contentType: 'image/jpeg',
-      });
+    it('returns 422 PRODUCT_IMAGE_TOO_LARGE when object exceeds 5 MB', async () => {
+      vi.mocked(storage.getObjectMeta).mockResolvedValueOnce({ sizeBytes: 6 * 1024 * 1024, contentType: 'image/jpeg' });
 
       const res = await app.inject({
         method: 'POST',
         url: `/products/${productId}/images/confirm`,
         headers: { authorization: `Bearer ${adminToken}` },
-        payload: { s3Key },
+        payload: { images: { primary: { s3Key: `products/${productId}/too-large.jpg` } } },
       });
 
       expect(res.statusCode).toBe(422);
       expect(res.json<{ error: { code: string } }>().error.code).toBe('PRODUCT_IMAGE_TOO_LARGE');
     });
 
-    it('returns 422 when s3Key does not belong to this product', async () => {
+    it('returns 422 PRODUCT_IMAGE_KEY_MISMATCH when s3Key does not belong to this product', async () => {
       const res = await app.inject({
         method: 'POST',
         url: `/products/${productId}/images/confirm`,
         headers: { authorization: `Bearer ${adminToken}` },
-        payload: { s3Key: 'products/other-product-id/uuid.jpg' },
+        payload: { images: { primary: { s3Key: 'products/other-product-id/uuid.jpg' } } },
       });
 
       expect(res.statusCode).toBe(422);
@@ -976,25 +1008,23 @@ describe('products routes', () => {
 
     it('returns 404 for unknown product', async () => {
       const fakeId = '00000000-0000-0000-0000-000000000000';
-      const s3Key = `products/${fakeId}/uuid.jpg`;
       vi.mocked(storage.getObjectMeta).mockResolvedValueOnce({ sizeBytes: 100, contentType: 'image/jpeg' });
 
       const res = await app.inject({
         method: 'POST',
         url: `/products/${fakeId}/images/confirm`,
         headers: { authorization: `Bearer ${adminToken}` },
-        payload: { s3Key },
+        payload: { images: { primary: { s3Key: `products/${fakeId}/uuid.jpg` } } },
       });
       expect(res.statusCode).toBe(404);
     });
 
     it('returns 403 for REPORT_VIEWER', async () => {
-      const s3Key = `products/${productId}/uuid.jpg`;
       const res = await app.inject({
         method: 'POST',
         url: `/products/${productId}/images/confirm`,
         headers: { authorization: `Bearer ${reportViewerToken}` },
-        payload: { s3Key },
+        payload: { images: { primary: { s3Key: `products/${productId}/uuid.jpg` } } },
       });
       expect(res.statusCode).toBe(403);
     });
@@ -1009,19 +1039,19 @@ describe('products routes', () => {
         method: 'POST',
         url: `/products/${productId}/images/confirm`,
         headers: { authorization: `Bearer ${adminToken}`, 'idempotency-key': key },
-        payload: { s3Key },
+        payload: { images: { primary: { s3Key } } },
       });
       const second = await app.inject({
         method: 'POST',
         url: `/products/${productId}/images/confirm`,
         headers: { authorization: `Bearer ${adminToken}`, 'idempotency-key': key },
-        payload: { s3Key },
+        payload: { images: { primary: { s3Key } } },
       });
 
       expect(first.statusCode).toBe(200);
       expect(second.statusCode).toBe(200);
-      // getObjectMeta called exactly once — second call is a Redis replay
       expect(vi.mocked(storage.getObjectMeta)).toHaveBeenCalledTimes(1);
     });
   });
+
 });

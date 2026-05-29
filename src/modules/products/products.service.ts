@@ -10,6 +10,7 @@ import {
   ProductImageNotUploadedError,
   ProductImageTooLargeError,
   ProductImageKeyMismatchError,
+  ProductImagePrimaryRequiredError,
 } from './products.errors.js';
 import { ForbiddenError } from '../../shared/errors/base.js';
 import type { CreateProductBody, UpdateProductBody, UpdateVariantBody } from './products.schemas.js';
@@ -34,7 +35,7 @@ const AUDIT = {
   unpublished: 'product.unpublished',
   suspended: 'product.suspended',
   unsuspended: 'product.unsuspended',
-  imageConfirmed: 'product.image_confirmed',
+  imagesConfirmed: 'product.images_confirmed',
 } as const;
 
 const MIME_TO_EXT: Record<string, string> = {
@@ -44,6 +45,7 @@ const MIME_TO_EXT: Record<string, string> = {
 };
 
 type ProductRow = Awaited<ReturnType<ProductsRepository['findByPublicId']>>;
+type ProductListRow = Awaited<ReturnType<ProductsRepository['listByTenant']>>[number];
 type VariantRow = Awaited<ReturnType<ProductsRepository['listVariantsByProductId']>>[number];
 
 function slugify(name: string): string {
@@ -66,7 +68,7 @@ function toVariantView(row: VariantRow): VariantView {
   };
 }
 
-function toListView(row: NonNullable<ProductRow>, isAdmin: boolean): ProductListView {
+function toListView(row: ProductListRow, isAdmin: boolean): ProductListView {
   const view: ProductListView = {
     id: row.publicId,
     sku: row.sku,
@@ -200,10 +202,12 @@ export class ProductsService {
     if (!row) throw new ProductNotFoundError('Product not found');
 
     const variantRows = await this.repo.listVariantsByProductId(row.id);
+    const media: MediaEntry[] = Array.isArray(row.media) ? (row.media as unknown as MediaEntry[]) : [];
 
     return {
       ...toListView(row, isAdmin),
       variants: variantRows.map(toVariantView),
+      media,
     };
   }
 
@@ -420,51 +424,96 @@ export class ProductsService {
     return { s3Key, uploadUrl, expiresAt: expiresAt.toISOString() };
   }
 
-  async confirmImageUpload(
+  async confirmImages(
     productPublicId: string,
-    s3Key: string,
-    altText: string | null,
+    input: {
+      primary?: { s3Key: string; altText: string | null };
+      others: Array<{ s3Key: string; altText: string | null }>;
+    },
     actor: ProductActor,
     requestId: string,
   ): Promise<ProductView> {
-    if (!s3Key.startsWith(`products/${productPublicId}/`)) {
-      throw new ProductImageKeyMismatchError('s3Key does not belong to this product');
+    const allNew = [
+      ...(input.primary ? [input.primary] : []),
+      ...input.others,
+    ];
+
+    for (const img of allNew) {
+      if (!img.s3Key.startsWith(`products/${productPublicId}/`)) {
+        throw new ProductImageKeyMismatchError('s3Key does not belong to this product');
+      }
     }
 
     const row = await this.repo.findProductMedia(productPublicId, actor.tenantId);
     if (!row) throw new ProductNotFoundError('Product not found');
 
-    const meta = await getObjectMeta(s3Key);
-    if (!meta) throw new ProductImageNotUploadedError('Image has not been uploaded to S3 yet');
-    if (meta.sizeBytes > MAX_IMAGE_SIZE_BYTES) {
-      throw new ProductImageTooLargeError(
-        `Image exceeds the 5 MB limit (got ${(meta.sizeBytes / 1024 / 1024).toFixed(2)} MB)`,
+    const existing: MediaEntry[] = Array.isArray(row.media) ? (row.media as unknown as MediaEntry[]) : [];
+
+    if (!input.primary && existing.length === 0) {
+      throw new ProductImagePrimaryRequiredError(
+        'A primary image is required when the product has no existing images',
       );
     }
 
-    const existing: MediaEntry[] = Array.isArray(row.media) ? (row.media as unknown as MediaEntry[]) : [];
-    const newEntry: MediaEntry = {
-      url: buildObjectUrl(s3Key),
-      altText,
+    const metas = await Promise.all(allNew.map((img) => getObjectMeta(img.s3Key)));
+
+    for (let i = 0; i < allNew.length; i++) {
+      const meta = metas[i]!;
+      if (!meta) throw new ProductImageNotUploadedError(`Image has not been uploaded to S3 yet: ${allNew[i]!.s3Key}`);
+      if (meta.sizeBytes > MAX_IMAGE_SIZE_BYTES) {
+        throw new ProductImageTooLargeError(
+          `Image exceeds the 5 MB limit (${allNew[i]!.s3Key}): ${(meta.sizeBytes / 1024 / 1024).toFixed(2)} MB`,
+        );
+      }
+    }
+
+    const baseOrder = existing.length;
+    const primaryOffset = input.primary ? 1 : 0;
+
+    const newPrimary: MediaEntry | undefined = input.primary
+      ? {
+          s3Key: input.primary.s3Key,
+          url: buildObjectUrl(input.primary.s3Key),
+          altText: input.primary.altText,
+          mediaType: 'image',
+          sortOrder: baseOrder,
+          isPrimary: true,
+        }
+      : undefined;
+
+    const newOthers: MediaEntry[] = input.others.map((img, i) => ({
+      s3Key: img.s3Key,
+      url: buildObjectUrl(img.s3Key),
+      altText: img.altText,
       mediaType: 'image',
-      sortOrder: existing.length,
-      isPrimary: existing.length === 0,
-    };
+      sortOrder: baseOrder + primaryOffset + i,
+      isPrimary: false,
+    }));
+
+    const updatedExisting: MediaEntry[] = newPrimary
+      ? existing.map((e) => ({ ...e, isPrimary: false }))
+      : existing;
+
+    const finalMedia = [
+      ...updatedExisting,
+      ...(newPrimary ? [newPrimary] : []),
+      ...newOthers,
+    ];
 
     await this.db.transaction().execute(async (tx) => {
-      await this.repo.withTx(tx).setMedia(row.id, [...existing, newEntry]);
+      await this.repo.withTx(tx).setMedia(row.id, finalMedia);
       await this.audit.withTx(tx).record({
         tenantId: actor.tenantId,
         actorId: actor.userId,
         entityType: 'Product',
         entityId: productPublicId,
-        action: AUDIT.imageConfirmed,
-        after: { s3Key, url: newEntry.url, altText, sortOrder: newEntry.sortOrder },
+        action: AUDIT.imagesConfirmed,
+        after: { added: allNew.map((i) => i.s3Key), totalMedia: finalMedia.length },
         requestId,
       });
     });
 
-    logger.info({ productPublicId, s3Key }, 'product.image_confirmed');
+    logger.info({ productPublicId, added: allNew.length }, 'product.images_confirmed');
     return this.get(productPublicId, actor.tenantId, actor.role === 'ADMIN');
   }
 }

@@ -32,6 +32,7 @@ export interface ProductListView {
 
 export interface ProductView extends ProductListView {
   variants: VariantView[];
+  media: MediaEntry[];
 }
 
 export interface ProductActor {
@@ -41,6 +42,7 @@ export interface ProductActor {
 }
 
 export interface MediaEntry {
+  s3Key: string;
   url: string;
   altText: string | null;
   mediaType: 'image';
