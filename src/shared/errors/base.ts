@@ -9,26 +9,26 @@ export abstract class AppError extends Error {
 }
 
 export class NotFoundError extends AppError {
-  readonly code = 'NOT_FOUND';
+  override readonly code: string = 'NOT_FOUND';
   readonly statusCode = 404;
 }
 
 export class ConflictError extends AppError {
-  readonly code = 'CONFLICT';
+  override readonly code: string = 'CONFLICT';
   readonly statusCode = 409;
 }
 
 export class ValidationError extends AppError {
-  readonly code = 'VALIDATION_ERROR';
+  override readonly code: string = 'VALIDATION_ERROR';
   readonly statusCode = 422;
 }
 
 export class UnauthorizedError extends AppError {
-  readonly code = 'UNAUTHORIZED';
+  override readonly code: string = 'UNAUTHORIZED';
   readonly statusCode = 401;
 }
 
 export class ForbiddenError extends AppError {
-  readonly code = 'FORBIDDEN';
+  override readonly code: string = 'FORBIDDEN';
   readonly statusCode = 403;
 }
