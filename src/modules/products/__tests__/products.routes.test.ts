@@ -1054,4 +1054,151 @@ describe('products routes', () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // PATCH /products/:id/images/primary
+  // ---------------------------------------------------------------------------
+
+  describe('PATCH /products/:id/images/primary', () => {
+    let productId: string;
+    let key1: string;
+    let key2: string;
+
+    beforeAll(async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/products',
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { name: 'Primary Image Product', sku: 'PRIMARY-IMG-001', categoryId, uomCode: 'EA', listPrice: '15.00' },
+      });
+      productId = res.json<ProductView>().id;
+
+      key1 = `products/${productId}/img-primary-1.jpg`;
+      key2 = `products/${productId}/img-primary-2.png`;
+
+      vi.mocked(storage.getObjectMeta)
+        .mockResolvedValueOnce({ sizeBytes: 100, contentType: 'image/jpeg' })
+        .mockResolvedValueOnce({ sizeBytes: 200, contentType: 'image/png' });
+      vi.mocked(storage.buildObjectUrl)
+        .mockReturnValueOnce(`https://bucket.s3.amazonaws.com/${key1}`)
+        .mockReturnValueOnce(`https://bucket.s3.amazonaws.com/${key2}`);
+
+      await app.inject({
+        method: 'POST',
+        url: `/products/${productId}/images/confirm`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: {
+          images: {
+            primary: { s3Key: key1, altText: 'First' },
+            others: [{ s3Key: key2, altText: 'Second' }],
+          },
+        },
+      });
+    });
+
+    beforeEach(() => { vi.clearAllMocks(); });
+
+    it('promotes key2 to primary and demotes key1', async () => {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/products/${productId}/images/primary`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { s3Key: key2 },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const media = res.json<ProductView>().media;
+      expect(media.find((m) => m.s3Key === key2)!.isPrimary).toBe(true);
+      expect(media.find((m) => m.s3Key === key1)!.isPrimary).toBe(false);
+    });
+
+    it('calling with already-primary s3Key returns 200 unchanged without writing audit', async () => {
+      const before = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) FROM "AuditLog" WHERE action = 'product.image_primary_set'`,
+      );
+
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/products/${productId}/images/primary`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { s3Key: key2 },
+      });
+
+      const after = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) FROM "AuditLog" WHERE action = 'product.image_primary_set'`,
+      );
+
+      expect(res.statusCode).toBe(200);
+      expect(after.rows[0]!.count).toBe(before.rows[0]!.count);
+    });
+
+    it('writes audit log with action product.image_primary_set', async () => {
+      await app.inject({
+        method: 'PATCH',
+        url: `/products/${productId}/images/primary`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { s3Key: key1 },
+      });
+
+      const audit = await pool.query<{ action: string }>(
+        `SELECT action FROM "AuditLog" WHERE action = 'product.image_primary_set' ORDER BY id DESC LIMIT 1`,
+      );
+      expect(audit.rows[0]!.action).toBe('product.image_primary_set');
+    });
+
+    it('returns 422 PRODUCT_IMAGE_NOT_FOUND when s3Key is not in product media', async () => {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/products/${productId}/images/primary`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { s3Key: `products/${productId}/ghost.jpg` },
+      });
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json<{ error: { code: string } }>().error.code).toBe('PRODUCT_IMAGE_NOT_FOUND');
+    });
+
+    it('returns 404 for unknown product', async () => {
+      const fakeId = '00000000-0000-0000-0000-000000000000';
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/products/${fakeId}/images/primary`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { s3Key: `products/${fakeId}/img.jpg` },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 403 for REPORT_VIEWER', async () => {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/products/${productId}/images/primary`,
+        headers: { authorization: `Bearer ${reportViewerToken}` },
+        payload: { s3Key: key1 },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('replays set-primary response on retry with same Idempotency-Key', async () => {
+      const key = `primary-idem-${Date.now()}`;
+      const first = await app.inject({
+        method: 'PATCH',
+        url: `/products/${productId}/images/primary`,
+        headers: { authorization: `Bearer ${adminToken}`, 'idempotency-key': key },
+        payload: { s3Key: key2 },
+      });
+      const second = await app.inject({
+        method: 'PATCH',
+        url: `/products/${productId}/images/primary`,
+        headers: { authorization: `Bearer ${adminToken}`, 'idempotency-key': key },
+        payload: { s3Key: key2 },
+      });
+
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(200);
+      expect(first.json<ProductView>().media.find((m) => m.s3Key === key2)!.isPrimary).toBe(true);
+      expect(second.json<ProductView>().media.find((m) => m.s3Key === key2)!.isPrimary).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
 });

@@ -658,4 +658,59 @@ export const productsPlugin: FastifyPluginAsync<ProductsPluginOptions> = async (
     },
   );
 
+  // ---------------------------------------------------------------------------
+  // PATCH /products/:id/images/primary
+  // ---------------------------------------------------------------------------
+  app.patch(
+    '/products/:id/images/primary',
+    {
+      schema: {
+        tags: ['Products'],
+        summary: 'Set the primary image for a product',
+        description:
+          'Promotes an already-confirmed image to primary and demotes all others. ' +
+          'The s3Key must exist in the product media list — use the s3Key values ' +
+          'returned in ProductView.media. No S3 call is made. ' +
+          'Calling this with the current primary s3Key is a no-op (returns 200 unchanged).',
+        security: [{ bearerAuth: [] }],
+        headers: {
+          type: 'object',
+          properties: { 'idempotency-key': { type: 'string' } },
+        },
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: { id: { type: 'string', format: 'uuid' } },
+        },
+        body: {
+          type: 'object',
+          required: ['s3Key'],
+          properties: {
+            s3Key: { type: 'string', minLength: 1 },
+          },
+        },
+        response: {
+          200: productSchema,
+          401: { ...errorSchema, description: 'Missing or invalid session' },
+          403: { ...errorSchema, description: 'Insufficient permissions' },
+          404: { ...errorSchema, description: 'Product not found' },
+          422: {
+            ...errorSchema,
+            description: 'PRODUCT_IMAGE_NOT_FOUND — s3Key not in product media',
+          },
+        },
+      },
+      preHandler: [idempotency.before, authenticate, authorize('product:write')],
+      onSend: [idempotency.after],
+    },
+    async (request, reply) => {
+      const params = ProductParamsSchema.safeParse(request.params);
+      if (!params.success) throw new ValidationError('Invalid product id');
+      const body = request.body as { s3Key: string };
+      const result = await service.setPrimaryImage(params.data.id, body.s3Key, request.user, request.id);
+      return reply.status(200).send(result);
+    },
+  );
+
+  // ---------------------------------------------------------------------------
 };

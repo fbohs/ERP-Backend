@@ -11,6 +11,7 @@ import {
   ProductImageTooLargeError,
   ProductImageKeyMismatchError,
   ProductImagePrimaryRequiredError,
+  ProductImageNotFoundError,
 } from './products.errors.js';
 import { ForbiddenError } from '../../shared/errors/base.js';
 import type { CreateProductBody, UpdateProductBody, UpdateVariantBody } from './products.schemas.js';
@@ -36,6 +37,7 @@ const AUDIT = {
   suspended: 'product.suspended',
   unsuspended: 'product.unsuspended',
   imagesConfirmed: 'product.images_confirmed',
+  imagePrimarySet: 'product.image_primary_set',
 } as const;
 
 const MIME_TO_EXT: Record<string, string> = {
@@ -514,6 +516,43 @@ export class ProductsService {
     });
 
     logger.info({ productPublicId, added: allNew.length }, 'product.images_confirmed');
+    return this.get(productPublicId, actor.tenantId, actor.role === 'ADMIN');
+  }
+
+  async setPrimaryImage(
+    productPublicId: string,
+    s3Key: string,
+    actor: ProductActor,
+    requestId: string,
+  ): Promise<ProductView> {
+    const row = await this.repo.findProductMedia(productPublicId, actor.tenantId);
+    if (!row) throw new ProductNotFoundError('Product not found');
+
+    const existing: MediaEntry[] = Array.isArray(row.media) ? (row.media as unknown as MediaEntry[]) : [];
+
+    const target = existing.find((e) => e.s3Key === s3Key);
+    if (!target) throw new ProductImageNotFoundError('s3Key not found in product media');
+
+    if (target.isPrimary) {
+      return this.get(productPublicId, actor.tenantId, actor.role === 'ADMIN');
+    }
+
+    const updated = existing.map((e) => ({ ...e, isPrimary: e.s3Key === s3Key }));
+
+    await this.db.transaction().execute(async (tx) => {
+      await this.repo.withTx(tx).setMedia(row.id, updated);
+      await this.audit.withTx(tx).record({
+        tenantId: actor.tenantId,
+        actorId: actor.userId,
+        entityType: 'Product',
+        entityId: productPublicId,
+        action: AUDIT.imagePrimarySet,
+        after: { s3Key },
+        requestId,
+      });
+    });
+
+    logger.info({ productPublicId, s3Key }, 'product.image_primary_set');
     return this.get(productPublicId, actor.tenantId, actor.role === 'ADMIN');
   }
 }

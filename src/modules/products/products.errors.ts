@@ -39,3 +39,7 @@ export class ProductImageKeyMismatchError extends ValidationError {
 export class ProductImagePrimaryRequiredError extends ValidationError {
   override readonly code = 'PRODUCT_IMAGE_PRIMARY_REQUIRED';
 }
+
+export class ProductImageNotFoundError extends ValidationError {
+  override readonly code = 'PRODUCT_IMAGE_NOT_FOUND';
+}
