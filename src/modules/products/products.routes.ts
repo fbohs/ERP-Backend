@@ -483,4 +483,126 @@ export const productsPlugin: FastifyPluginAsync<ProductsPluginOptions> = async (
       return reply.status(200).send(result);
     },
   );
+
+  // ---------------------------------------------------------------------------
+  // POST /products/:id/images/presign
+  // ---------------------------------------------------------------------------
+  app.post(
+    '/products/:id/images/presign',
+    {
+      schema: {
+        tags: ['Products'],
+        summary: 'Request a presigned S3 upload URL for a product image',
+        description:
+          'Returns a presigned PUT URL the client uses to upload directly to S3. ' +
+          'The URL and s3Key are cached for 24 hours — retry with the same Idempotency-Key ' +
+          'to recover the same URL without generating a new one. ' +
+          'Call POST /products/:id/images/confirm after a successful upload.',
+        security: [{ bearerAuth: [] }],
+        headers: {
+          type: 'object',
+          properties: { 'idempotency-key': { type: 'string' } },
+        },
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: { id: { type: 'string', format: 'uuid' } },
+        },
+        body: {
+          type: 'object',
+          required: ['mimeType'],
+          properties: {
+            mimeType: {
+              type: 'string',
+              enum: ['image/jpeg', 'image/png', 'image/webp'],
+            },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              s3Key: { type: 'string' },
+              uploadUrl: { type: 'string' },
+              expiresAt: { type: 'string', format: 'date-time' },
+            },
+          },
+          401: { ...errorSchema, description: 'Missing or invalid session' },
+          403: { ...errorSchema, description: 'Insufficient permissions' },
+          404: { ...errorSchema, description: 'Product not found' },
+          422: { ...errorSchema, description: 'Invalid mimeType' },
+        },
+      },
+      preHandler: [idempotency.before, authenticate, authorize('product:write')],
+      onSend: [idempotency.after],
+    },
+    async (request, reply) => {
+      const params = ProductParamsSchema.safeParse(request.params);
+      if (!params.success) throw new ValidationError('Invalid product id');
+      const body = request.body as { mimeType: string };
+      const result = await service.presignImageUpload(params.data.id, body.mimeType, request.user);
+      return reply.status(200).send(result);
+    },
+  );
+
+  // ---------------------------------------------------------------------------
+  // POST /products/:id/images/confirm
+  // ---------------------------------------------------------------------------
+  app.post(
+    '/products/:id/images/confirm',
+    {
+      schema: {
+        tags: ['Products'],
+        summary: 'Confirm a product image upload and persist it',
+        description:
+          'Verifies the object exists in S3 (max 5 MB), then appends it to the product media list. ' +
+          'Use the s3Key returned by POST /products/:id/images/presign. ' +
+          'Send the s3Key as the Idempotency-Key to make this safe to retry.',
+        security: [{ bearerAuth: [] }],
+        headers: {
+          type: 'object',
+          properties: { 'idempotency-key': { type: 'string' } },
+        },
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: { id: { type: 'string', format: 'uuid' } },
+        },
+        body: {
+          type: 'object',
+          required: ['s3Key'],
+          properties: {
+            s3Key: { type: 'string', minLength: 1 },
+            altText: { type: 'string', maxLength: 255 },
+          },
+        },
+        response: {
+          200: productSchema,
+          401: { ...errorSchema, description: 'Missing or invalid session' },
+          403: { ...errorSchema, description: 'Insufficient permissions' },
+          404: { ...errorSchema, description: 'Product not found' },
+          422: {
+            ...errorSchema,
+            description:
+              'PRODUCT_IMAGE_NOT_UPLOADED | PRODUCT_IMAGE_TOO_LARGE | PRODUCT_IMAGE_KEY_MISMATCH',
+          },
+        },
+      },
+      preHandler: [idempotency.before, authenticate, authorize('product:write')],
+      onSend: [idempotency.after],
+    },
+    async (request, reply) => {
+      const params = ProductParamsSchema.safeParse(request.params);
+      if (!params.success) throw new ValidationError('Invalid product id');
+      const body = request.body as { s3Key: string; altText?: string };
+      const result = await service.confirmImageUpload(
+        params.data.id,
+        body.s3Key,
+        body.altText ?? null,
+        request.user,
+        request.id,
+      );
+      return reply.status(200).send(result);
+    },
+  );
 };

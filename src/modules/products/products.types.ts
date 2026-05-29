@@ -39,3 +39,17 @@ export interface ProductActor {
   tenantId: string;
   role: string;
 }
+
+export interface MediaEntry {
+  url: string;
+  altText: string | null;
+  mediaType: 'image';
+  sortOrder: number;
+  isPrimary: boolean;
+}
+
+export interface PresignImageView {
+  s3Key: string;
+  uploadUrl: string;
+  expiresAt: string;
+}

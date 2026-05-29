@@ -23,3 +23,15 @@ export class InvalidCategoryError extends ValidationError {
 export class InvalidUomError extends ValidationError {
   override readonly code = 'INVALID_UOM';
 }
+
+export class ProductImageNotUploadedError extends ValidationError {
+  override readonly code = 'PRODUCT_IMAGE_NOT_UPLOADED';
+}
+
+export class ProductImageTooLargeError extends ValidationError {
+  override readonly code = 'PRODUCT_IMAGE_TOO_LARGE';
+}
+
+export class ProductImageKeyMismatchError extends ValidationError {
+  override readonly code = 'PRODUCT_IMAGE_KEY_MISMATCH';
+}

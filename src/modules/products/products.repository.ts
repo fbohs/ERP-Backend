@@ -234,4 +234,20 @@ export class ProductsRepository {
       .executeTakeFirst();
   }
 
+  async findProductMedia(publicId: string, tenantId: string) {
+    return this.exec
+      .selectFrom('Product')
+      .select(['id', 'media'])
+      .where('publicId', '=', publicId)
+      .where('tenantId', '=', tenantId)
+      .executeTakeFirst();
+  }
+
+  async setMedia(id: string, media: unknown[]): Promise<void> {
+    await this.exec
+      .updateTable('Product')
+      .set({ media: JSON.stringify(media) })
+      .where('id', '=', id)
+      .execute();
+  }
 }

@@ -1,3 +1,4 @@
+import * as crypto from 'node:crypto';
 import { logger } from '../../shared/logging/index.js';
 import {
   ProductNotFoundError,
@@ -6,14 +7,24 @@ import {
   VariantSkuExistsError,
   InvalidCategoryError,
   InvalidUomError,
+  ProductImageNotUploadedError,
+  ProductImageTooLargeError,
+  ProductImageKeyMismatchError,
 } from './products.errors.js';
 import { ForbiddenError } from '../../shared/errors/base.js';
 import type { CreateProductBody, UpdateProductBody, UpdateVariantBody } from './products.schemas.js';
 import type { ProductsRepository } from './products.repository.js';
 import type { AuditRepository } from '../../shared/audit/index.js';
 import type { AppDb } from '../../shared/db/index.js';
-import type { ProductView, ProductListView, VariantView, ProductActor } from './products.types.js';
+import type { ProductView, ProductListView, VariantView, ProductActor, MediaEntry, PresignImageView } from './products.types.js';
 import type { Productstatus } from '../../types/db.js';
+import {
+  generatePresignedPutUrl,
+  getObjectMeta,
+  buildObjectUrl,
+  isAllowedMimeType,
+  MAX_IMAGE_SIZE_BYTES,
+} from '../../shared/storage/index.js';
 
 const AUDIT = {
   created: 'product.created',
@@ -23,7 +34,14 @@ const AUDIT = {
   unpublished: 'product.unpublished',
   suspended: 'product.suspended',
   unsuspended: 'product.unsuspended',
+  imageConfirmed: 'product.image_confirmed',
 } as const;
+
+const MIME_TO_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
 
 type ProductRow = Awaited<ReturnType<ProductsRepository['findByPublicId']>>;
 type VariantRow = Awaited<ReturnType<ProductsRepository['listVariantsByProductId']>>[number];
@@ -377,5 +395,76 @@ export class ProductsService {
 
     logger.info({ publicId }, 'product.unsuspended');
     return this.get(publicId, actor.tenantId, actor.role === 'ADMIN');
+  }
+
+  async presignImageUpload(
+    productPublicId: string,
+    mimeType: string,
+    actor: ProductActor,
+  ): Promise<PresignImageView> {
+    if (!isAllowedMimeType(mimeType)) {
+      throw new ProductImageKeyMismatchError(
+        'mimeType must be image/jpeg, image/png, or image/webp',
+      );
+    }
+
+    const product = await this.repo.findByPublicId(productPublicId, actor.tenantId);
+    if (!product) throw new ProductNotFoundError('Product not found');
+
+    const ext = MIME_TO_EXT[mimeType];
+    const s3Key = `products/${productPublicId}/${crypto.randomUUID()}.${ext}`;
+
+    const { uploadUrl, expiresAt } = await generatePresignedPutUrl(s3Key, mimeType);
+
+    logger.info({ productPublicId, s3Key }, 'product.image_presigned');
+    return { s3Key, uploadUrl, expiresAt: expiresAt.toISOString() };
+  }
+
+  async confirmImageUpload(
+    productPublicId: string,
+    s3Key: string,
+    altText: string | null,
+    actor: ProductActor,
+    requestId: string,
+  ): Promise<ProductView> {
+    if (!s3Key.startsWith(`products/${productPublicId}/`)) {
+      throw new ProductImageKeyMismatchError('s3Key does not belong to this product');
+    }
+
+    const row = await this.repo.findProductMedia(productPublicId, actor.tenantId);
+    if (!row) throw new ProductNotFoundError('Product not found');
+
+    const meta = await getObjectMeta(s3Key);
+    if (!meta) throw new ProductImageNotUploadedError('Image has not been uploaded to S3 yet');
+    if (meta.sizeBytes > MAX_IMAGE_SIZE_BYTES) {
+      throw new ProductImageTooLargeError(
+        `Image exceeds the 5 MB limit (got ${(meta.sizeBytes / 1024 / 1024).toFixed(2)} MB)`,
+      );
+    }
+
+    const existing: MediaEntry[] = Array.isArray(row.media) ? (row.media as unknown as MediaEntry[]) : [];
+    const newEntry: MediaEntry = {
+      url: buildObjectUrl(s3Key),
+      altText,
+      mediaType: 'image',
+      sortOrder: existing.length,
+      isPrimary: existing.length === 0,
+    };
+
+    await this.db.transaction().execute(async (tx) => {
+      await this.repo.withTx(tx).setMedia(row.id, [...existing, newEntry]);
+      await this.audit.withTx(tx).record({
+        tenantId: actor.tenantId,
+        actorId: actor.userId,
+        entityType: 'Product',
+        entityId: productPublicId,
+        action: AUDIT.imageConfirmed,
+        after: { s3Key, url: newEntry.url, altText, sortOrder: newEntry.sortOrder },
+        requestId,
+      });
+    });
+
+    logger.info({ productPublicId, s3Key }, 'product.image_confirmed');
+    return this.get(productPublicId, actor.tenantId, actor.role === 'ADMIN');
   }
 }
