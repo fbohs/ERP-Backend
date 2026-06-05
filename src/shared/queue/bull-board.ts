@@ -7,20 +7,11 @@ import { PASSWORD_RESET_EMAIL_QUEUE } from '../../modules/auth/jobs/send-passwor
 import { PLATFORM_LOGIN_EMAIL_QUEUE } from '../../modules/platform/jobs/send-login-link-email.js';
 import { createIpAllowlist } from '../auth/index.js';
 import { NotFoundError } from '../errors/base.js';
+import { connectionFor } from './connection.js';
 
 interface BullBoardPluginOptions {
   queueRedisUrl: string;
   ipAllowlist: string;
-}
-
-function connectionFor(queueRedisUrl: string) {
-  const url = new URL(queueRedisUrl);
-  return {
-    host: url.hostname,
-    port: Number(url.port) || 6379,
-    ...(url.password ? { password: url.password } : {}),
-    ...(url.username ? { username: url.username } : {}),
-  };
 }
 
 export const bullBoardPlugin: FastifyPluginAsync<BullBoardPluginOptions> = async (app, opts) => {
