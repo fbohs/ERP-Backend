@@ -30,6 +30,9 @@ export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstanc
   const db = createDb(overrides?.databaseUrl ?? config.databaseUrl);
   const redis = createRedis(overrides?.redisUrl ?? config.redisUrl);
   const queueRedisUrl = overrides?.queueRedisUrl ?? config.queueRedisUrl;
+  if (!queueRedisUrl) {
+    throw new Error('QUEUE_REDIS_URL is required but was not set');
+  }
   // Idempotency keys must survive a restart, so they live on the durable
   // (AOF-persisted) queue Redis, not the evictable session cache.
   const queueRedis = createRedis(queueRedisUrl);

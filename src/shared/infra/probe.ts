@@ -15,8 +15,8 @@ async function probePostgres(): Promise<void> {
   await client.end();
 }
 
-async function probeRedis(): Promise<void> {
-  const redis = new Redis(config.redisUrl, {
+async function probeRedis(url: string): Promise<void> {
+  const redis = new Redis(url, {
     lazyConnect: true,
     connectTimeout: PROBE_TIMEOUT_MS,
     maxRetriesPerRequest: 0,
@@ -30,7 +30,8 @@ async function probeRedis(): Promise<void> {
 export async function assertInfraReady(): Promise<void> {
   const probes: Array<{ name: string; fn: () => Promise<void> }> = [
     { name: 'PostgreSQL', fn: probePostgres },
-    { name: 'Redis', fn: probeRedis },
+    { name: 'Redis (session)', fn: () => probeRedis(config.redisUrl) },
+    { name: 'Redis (queue)', fn: () => probeRedis(config.queueRedisUrl) },
   ];
 
   const results = await Promise.allSettled(probes.map((p) => p.fn()));
