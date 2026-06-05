@@ -107,6 +107,3 @@ export const ROLE_PERMISSIONS: Record<Userrole, ReadonlySet<Permission>> = {
   ]),
 };
 
-export function hasPermission(role: Userrole, permission: Permission): boolean {
-  return ROLE_PERMISSIONS[role].has(permission);
-}
