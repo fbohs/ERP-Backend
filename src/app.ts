@@ -85,24 +85,9 @@ export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstanc
   // or not at all. With it off, emails are simply not sent — never enqueued to
   // pile up unconsumed.
   const emailEnabled = config.resendApiKey !== '';
-  const emailWorkers = emailEnabled
-    ? startEmailWorkers(queueRedisUrl, config.resendApiKey, {
-        emailFrom: config.emailFrom,
-        passwordResetTtlMinutes: config.passwordResetTtlSeconds / 60,
-        platformLoginTtlMinutes: config.platformLoginTokenTtlSeconds / 60,
-        appBaseUrl: config.appBaseUrl,
-      })
-    : [];
   if (!emailEnabled) {
     logger.warn('RESEND_API_KEY not set — password reset and platform login emails are disabled');
   }
-
-  app.addHook('onClose', async () => {
-    await Promise.all(emailWorkers.map((worker) => worker.close()));
-    await db.destroy();
-    await redis.quit();
-    await queueRedis.quit();
-  });
 
   registerErrorHandler(app);
 
@@ -131,12 +116,28 @@ export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstanc
   await app.register(categoriesPlugin, { db, redis, queueRedis });
   await app.register(productsPlugin, { db, redis, queueRedis });
 
-  if (queueRedisUrl !== '') {
-    await app.register(bullBoardPlugin, {
-      queueRedisUrl,
-      ipAllowlist: overrides?.platformIpAllowlist ?? config.platformIpAllowlist,
-    });
-  }
+  await app.register(bullBoardPlugin, {
+    queueRedisUrl,
+    ipAllowlist: overrides?.platformIpAllowlist ?? config.platformIpAllowlist,
+  });
+
+  // Workers start only after all plugins have registered successfully, so the
+  // onClose hook below is guaranteed to fire if buildApp() returns.
+  const emailWorkers = emailEnabled
+    ? startEmailWorkers(queueRedisUrl, config.resendApiKey, {
+        emailFrom: config.emailFrom,
+        passwordResetTtlMinutes: config.passwordResetTtlSeconds / 60,
+        platformLoginTtlMinutes: config.platformLoginTokenTtlSeconds / 60,
+        appBaseUrl: config.appBaseUrl,
+      })
+    : [];
+
+  app.addHook('onClose', async () => {
+    await Promise.all(emailWorkers.map((worker) => worker.close()));
+    await db.destroy();
+    await redis.quit();
+    await queueRedis.quit();
+  });
 
   return app;
 }
