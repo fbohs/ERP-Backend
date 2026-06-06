@@ -66,10 +66,12 @@ npm run start            # run compiled output
 npm run db:migrate       # run pending Prisma migrations (dev)
 npm run db:migrate:deploy  # run migrations (CI/prod, no prompts)
 npm run db:generate      # regenerate Prisma client
-npm run db:codegen       # regenerate Kysely DB types from live schema
+npm run db:codegen       # regenerate Kysely DB types from live schema (run after every migration)
 npm run db:studio        # open Prisma Studio
 
-npm run test             # run all tests (Vitest)
+npm run test             # run all tests (Vitest; requires Docker for Testcontainers)
+npx vitest run <file>    # run a single test file
+npx vitest run <file>    # run a single test file
 npm run test:watch       # watch mode
 npm run test:coverage    # with coverage report
 
@@ -86,6 +88,19 @@ npm run platform:create-admin   # create a platform admin
 npm run platform:update-admin   # update credentials / role
 npm run platform:revoke-sessions  # revoke all active sessions
 ```
+
+## Email
+
+Email is optional. When  is empty the server starts normally — password-reset and welcome emails are silently skipped. No queue entries are written, so there is nothing to pile up.
+
+## Dev UIs (platform surface, IP-restricted)
+
+Both UIs enforce the `PLATFORM_IP_ALLOWLIST` check and return 404 to unlisted IPs.
+
+| UI | URL |
+|---|---|
+| Swagger / OpenAPI | `http://localhost:3000/platform/docs` |
+| Bull Board (queue monitor) | `http://localhost:3000/platform/queues` |
 
 ## Project Structure
 
