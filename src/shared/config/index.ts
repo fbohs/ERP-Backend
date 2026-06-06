@@ -46,4 +46,7 @@ export function validateConfig(): void {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error(`Invalid PORT "${rawPort}": must be an integer between 1 and 65535`);
   }
+  if (config.isProduction && config.resendApiKey === '') {
+    throw new Error('RESEND_API_KEY is required in production');
+  }
 }
