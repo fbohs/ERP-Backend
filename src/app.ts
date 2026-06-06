@@ -133,10 +133,17 @@ export async function buildApp(overrides?: AppOverrides): Promise<FastifyInstanc
     : [];
 
   app.addHook('onClose', async () => {
-    await Promise.all(emailWorkers.map((worker) => worker.close()));
-    await db.destroy();
-    await redis.quit();
-    await queueRedis.quit();
+    const results = await Promise.allSettled([
+      ...emailWorkers.map((worker) => worker.close()),
+      db.destroy(),
+      redis.quit(),
+      queueRedis.quit(),
+    ]);
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        logger.error({ err: result.reason }, 'Error during shutdown cleanup');
+      }
+    }
   });
 
   return app;
