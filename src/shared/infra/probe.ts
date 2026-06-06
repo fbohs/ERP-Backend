@@ -11,8 +11,11 @@ async function probePostgres(): Promise<void> {
     connectionTimeoutMillis: PROBE_TIMEOUT_MS,
   });
   await client.connect();
-  await client.query('SELECT 1');
-  await client.end();
+  try {
+    await client.query('SELECT 1');
+  } finally {
+    await client.end();
+  }
 }
 
 async function probeRedis(url: string): Promise<void> {
@@ -23,8 +26,11 @@ async function probeRedis(url: string): Promise<void> {
     enableOfflineQueue: false,
   });
   await redis.connect();
-  await redis.ping();
-  await redis.quit();
+  try {
+    await redis.ping();
+  } finally {
+    await redis.quit();
+  }
 }
 
 export async function assertInfraReady(): Promise<void> {
