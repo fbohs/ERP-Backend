@@ -78,13 +78,12 @@ Whenever you reach for it, leave a comment naming the Kysely limitation and para
 Every business table has a `tenant_id` column. Every query filters by it. The terse version is in the root `CLAUDE.md`; here's the depth.
 
 **Tenant context flow:**
-1. Auth middleware decodes the JWT and extracts `tenantId`, `actorId`.
-2. It places them in an `AsyncLocalStorage` instance from `shared/tenancy/context.ts`. Node 24 uses `AsyncContextFrame` by default — keep it.
-3. Routes read context and **pass `tenantId` explicitly** to services.
-4. Services pass `tenantId` explicitly to repositories.
-5. Repositories never read context. They take `tenantId` as a parameter.
+1. Auth middleware looks up the Bearer token and populates `request.user` with `{ userId, tenantId, role }`.
+2. The route handler reads `request.user.tenantId` and passes it **explicitly** to the service.
+3. The service passes `tenantId` **explicitly** to every repository call.
+4. Repositories never derive tenant context on their own — `tenantId` is always a parameter.
 
-The rule against reading context inside repos exists because (a) it makes them untestable without mocking `AsyncLocalStorage`, and (b) the day someone calls a repo from a non-HTTP entry point (a script, a job, a CLI) without setting context, you have a silent cross-tenant leak. Explicit parameters fail loudly.
+The explicit-parameter rule exists because (a) it makes repositories testable without any request context, and (b) non-HTTP entry points (scripts, CLI tools, BullMQ jobs) would have no middleware to set implicit context — relying on it would produce a silent cross-tenant leak. Explicit parameters fail loudly when the value is missing.
 
 **Admin tooling** that genuinely needs to cross tenants uses a clearly named API surface (`dbAcrossTenants`, not `db`). Reviewers should treat any use of it like a security-sensitive code path.
 
@@ -127,7 +126,7 @@ Modules subclass these (`InvoiceNotFoundError extends NotFoundError`). The globa
 
 ## <a id="auth"></a>7. Authentication & Authorization
 
-- **Authn:** JWT (short-lived) + refresh token rotation. Sessions cached in Redis with explicit revocation list.
+- **Authn:** Opaque session tokens stored in the `Session` table and cached in Redis with an absolute TTL. No JWT. On each request the token is looked up in Redis (fast path) or Postgres (slow path); the resulting `{ userId, tenantId, role }` is placed on `request.user`. Tokens are not rotated — they expire absolutely and are deleted on logout.
 - **Authz:** RBAC declared on routes via a `preHandler`:
 
   ```ts
