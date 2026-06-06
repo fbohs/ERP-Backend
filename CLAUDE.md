@@ -27,6 +27,53 @@ Anything outside this list → ADR (`/adr`).
 
 **After adding packages, audit for unused ones.** Grep `src/` for imports of every existing package. Remove anything with zero imports that is not a locked stack dependency (stack deps like `bullmq`, `decimal.js` are retained even if not yet used — they will be). Use `npm uninstall` to remove from both `package.json` and `node_modules`.
 
+## Commands
+
+```bash
+npm run dev                  # dev server with hot reload (loads .env.local automatically)
+npm run build && npm start   # compile then run production output
+
+npm test                     # run all tests
+npx vitest run <file>        # run one test file, e.g. src/modules/auth/__tests__/auth.routes.test.ts
+npm run test:coverage        # coverage report
+
+npm run db:migrate           # apply pending migrations (dev)
+npm run db:codegen           # regenerate Kysely DB types from live schema — run after every migration
+
+npm run lint && npx tsc --noEmit   # full static check before committing
+```
+
+Integration tests (`*.routes.test.ts`, `*.repository.test.ts`) spin up real Postgres and Redis via Testcontainers — Docker must be running.
+
+## Architecture Notes
+
+**Startup sequence** (`src/main.ts`):
+```
+validateConfig()          → reject invalid PORT at process start
+assertInfraReady()        → probe Postgres + both Redis instances; process.exit(1) on failure
+buildApp()                → register plugins, wire modules, start BullMQ workers
+app.listen()              → accept traffic
+```
+Any failure before `app.listen` exits the process — this is intentional. Nothing degrades silently.
+
+**Two Redis instances** — session cache and BullMQ queue are intentionally separate:
+- `REDIS_URL` — session cache. Eviction policy `allkeys-lru` is fine. Session loss is a logout, not data loss.
+- `QUEUE_REDIS_URL` — BullMQ queue + idempotency key store. Must be AOF-persisted. A restart that loses this queue loses enqueued jobs.
+
+**`AppOverrides` — how integration tests wire up** (`src/app.ts`):
+```ts
+const app = await buildApp({
+  databaseUrl: container.getConnectionUri(),
+  redisUrl: redisContainer.getConnectionUrl(),
+  queueRedisUrl: redisContainer.getConnectionUrl(),
+});
+```
+Every integration test calls `buildApp(overrides)` with Testcontainer URLs. No environment variables are read in tests — the overrides bypass `config` entirely. This means tests never need a `.env.local` and run in parallel safely.
+
+**Two API surfaces:**
+- `/platform/*` — superadmin only. Restricted by IP allowlist (`PLATFORM_IP_ALLOWLIST`). Swagger at `/platform/docs`, Bull Board at `/platform/queues`. Both return 404 to non-allowlisted IPs.
+- All other routes — tenant-scoped. Authenticated via `Bearer <token>` (opaque session token, not JWT), cached in session Redis.
+
 ## Folder Map
 
 ```
