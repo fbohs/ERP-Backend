@@ -5,11 +5,7 @@ const rawLogLevel = process.env['LOG_LEVEL'];
 
 function parsePort(raw: string | undefined): number {
   if (raw === undefined) return 3000;
-  const port = parseInt(raw, 10);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`Invalid PORT "${raw}": must be an integer between 1 and 65535`);
-  }
-  return port;
+  return parseInt(raw, 10);
 }
 
 export const config = {
@@ -44,3 +40,10 @@ export const config = {
     return this.nodeEnv === 'production';
   },
 } as const;
+
+export function validateConfig(): void {
+  const { port } = config;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid PORT "${rawPort}": must be an integer between 1 and 65535`);
+  }
+}
