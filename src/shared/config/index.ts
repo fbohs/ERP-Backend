@@ -3,8 +3,17 @@ const rawHost = process.env['HOST'];
 const rawNodeEnv = process.env['NODE_ENV'];
 const rawLogLevel = process.env['LOG_LEVEL'];
 
+function parsePort(raw: string | undefined): number {
+  if (raw === undefined) return 3000;
+  const port = parseInt(raw, 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid PORT "${raw}": must be an integer between 1 and 65535`);
+  }
+  return port;
+}
+
 export const config = {
-  port: rawPort !== undefined ? Number(rawPort) : 3000,
+  port: parsePort(rawPort),
   host: rawHost ?? '0.0.0.0',
   nodeEnv: rawNodeEnv ?? 'development',
   logLevel: rawLogLevel ?? 'info',
