@@ -23,24 +23,24 @@ Open-source ERP backend (accounting, HR, inventory). Money moves, ledgers must r
 
 Anything outside this list → ADR (`/adr`).
 
-**Package versions are always exact.** No `^` or `~` in `package.json`. Use `npm install --save-exact` / `npm install --save-dev --save-exact`.
+**Package versions are always exact.** No `^` or `~` in `package.json`. Use `pnpm add --save-exact` / `pnpm add --save-dev --save-exact`.
 
-**After adding packages, audit for unused ones.** Grep `src/` for imports of every existing package. Remove anything with zero imports that is not a locked stack dependency (stack deps like `bullmq`, `decimal.js` are retained even if not yet used — they will be). Use `npm uninstall` to remove from both `package.json` and `node_modules`.
+**After adding packages, audit for unused ones.** Grep `src/` for imports of every existing package. Remove anything with zero imports that is not a locked stack dependency (stack deps like `bullmq`, `decimal.js` are retained even if not yet used — they will be). Use `pnpm remove` to remove from both `package.json` and `node_modules`.
 
 ## Commands
 
 ```bash
-npm run dev                  # dev server with hot reload (loads .env.local automatically)
-npm run build && npm start   # compile then run production output
+pnpm dev                     # dev server with hot reload (loads .env.local automatically)
+pnpm build && pnpm start     # compile then run production output
 
-npm test                     # run all tests
-npx vitest run <file>        # run one test file, e.g. src/modules/auth/__tests__/auth.routes.test.ts
-npm run test:coverage        # coverage report
+pnpm test                    # run all tests
+pnpm exec vitest run <file>  # run one test file, e.g. src/modules/auth/__tests__/auth.routes.test.ts
+pnpm test:coverage           # coverage report
 
-npm run db:migrate           # apply pending migrations (dev)
-npm run db:codegen           # regenerate Kysely DB types from live schema — run after every migration
+pnpm db:migrate              # apply pending migrations (dev)
+pnpm db:codegen              # regenerate Kysely DB types from live schema — run after every migration
 
-npm run lint && npx tsc --noEmit   # full static check before committing
+pnpm lint && pnpm exec tsc --noEmit   # full static check before committing
 ```
 
 Integration tests (`*.routes.test.ts`, `*.repository.test.ts`) spin up real Postgres and Redis via Testcontainers — Docker must be running.
