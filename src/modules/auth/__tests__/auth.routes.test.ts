@@ -10,6 +10,10 @@ import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../../../app.js';
 
+function sha256(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.resolve(__dirname, '../../../../prisma/migrations');
 
@@ -294,15 +298,15 @@ describe('auth routes', () => {
 
       await pool.query(
         `INSERT INTO "PasswordResetToken" (token, "userId", "expiresAt") VALUES ($1, $2, $3)`,
-        [validToken, userId, new Date(Date.now() + 30 * 60 * 1_000)],
+        [sha256(validToken), userId, new Date(Date.now() + 30 * 60 * 1_000)],
       );
       await pool.query(
         `INSERT INTO "PasswordResetToken" (token, "userId", "expiresAt") VALUES ($1, $2, $3)`,
-        [expiredToken, userId, new Date(Date.now() - 1_000)],
+        [sha256(expiredToken), userId, new Date(Date.now() - 1_000)],
       );
       await pool.query(
         `INSERT INTO "PasswordResetToken" (token, "userId", "expiresAt", "usedAt") VALUES ($1, $2, $3, $4)`,
-        [usedToken, userId, new Date(Date.now() + 30 * 60 * 1_000), new Date()],
+        [sha256(usedToken), userId, new Date(Date.now() + 30 * 60 * 1_000), new Date()],
       );
     });
 
@@ -432,7 +436,7 @@ describe('auth routes', () => {
 
       const sessions = await pool.query<{ n: number }>(
         `SELECT count(*)::int AS n FROM "Session" WHERE token = $1`,
-        [firstToken],
+        [sha256(firstToken)],
       );
       expect(sessions.rows[0]!.n).toBe(1);
     });

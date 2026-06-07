@@ -41,23 +41,6 @@ export class AuthRepository {
       .execute();
   }
 
-  async findSessionWithUser(token: string) {
-    return this.exec
-      .selectFrom('Session')
-      .innerJoin('User', 'User.id', 'Session.userId')
-      .innerJoin('Tenant', 'Tenant.id', 'User.tenantId')
-      .select([
-        'User.id as userId',
-        'User.tenantId',
-        'User.role',
-        'User.isActive',
-        'Tenant.isActive as tenantIsActive',
-        'Session.expiresAt',
-      ])
-      .where('Session.token', '=', token)
-      .executeTakeFirst();
-  }
-
   async deleteSession(token: string): Promise<void> {
     await this.exec
       .deleteFrom('Session')

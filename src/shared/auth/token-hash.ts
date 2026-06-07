@@ -5,8 +5,7 @@ import { createHash } from 'node:crypto';
 // rest: a database leak yields only hashes, never usable tokens. Salting / argon2
 // are for low-entropy secrets (passwords) and would also break unique-index
 // lookups — neither applies here. Lookups hash the presented token and match by
-// hash. Currently used by the platform surface only; the tenant Session /
-// PasswordResetToken tables still store raw tokens (tracked follow-up).
+// hash.
 export function hashToken(rawToken: string): string {
   return createHash('sha256').update(rawToken).digest('hex');
 }

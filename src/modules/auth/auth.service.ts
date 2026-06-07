@@ -3,6 +3,7 @@ import * as argon2 from 'argon2';
 import { config } from '../../shared/config/index.js';
 import { UnauthorizedError } from '../../shared/errors/base.js';
 import { sessionCacheKey, type CachedSession } from '../../shared/auth/session.js';
+import { hashToken } from '../../shared/auth/token-hash.js';
 import {
   enqueuePasswordResetEmail,
   type PasswordResetEmailQueue,
@@ -66,17 +67,18 @@ export class AuthService {
       await this.db.transaction().execute(async (tx) => {
         const txRepo = this.repo.withTx(tx);
         await txRepo.deleteUnusedPasswordResetTokens(user.id);
-        await txRepo.createPasswordResetToken(user.id, setupToken, expiresAt, 'FIRST_LOGIN_SETUP');
+        await txRepo.createPasswordResetToken(user.id, hashToken(setupToken), expiresAt, 'FIRST_LOGIN_SETUP');
       });
 
       return { requiresPasswordChange: true as const, setupToken };
     }
 
     const token = crypto.randomBytes(32).toString('hex');
+    const tokenHash = hashToken(token);
     const expiresAt = new Date(Date.now() + config.sessionTtlSeconds * 1_000);
 
     await this.db.transaction().execute(async (tx) => {
-      await this.repo.withTx(tx).createSession(user.id, token, expiresAt);
+      await this.repo.withTx(tx).createSession(user.id, tokenHash, expiresAt);
       await this.audit.withTx(tx).record({
         tenantId: user.tenantId,
         actorId: user.id,
@@ -88,7 +90,7 @@ export class AuthService {
     });
 
     const cached: CachedSession = { userId: user.id, tenantId: user.tenantId, role: user.role };
-    await this.redis.setex(sessionCacheKey(token), config.sessionTtlSeconds, JSON.stringify(cached));
+    await this.redis.setex(sessionCacheKey(tokenHash), config.sessionTtlSeconds, JSON.stringify(cached));
 
     return {
       requiresPasswordChange: false as const,
@@ -99,8 +101,9 @@ export class AuthService {
   }
 
   async logout(token: string, actor: SessionActor, requestId: string): Promise<void> {
+    const tokenHash = hashToken(token);
     await this.db.transaction().execute(async (tx) => {
-      await this.repo.withTx(tx).deleteSession(token);
+      await this.repo.withTx(tx).deleteSession(tokenHash);
       await this.audit.withTx(tx).record({
         tenantId: actor.tenantId,
         actorId: actor.userId,
@@ -111,7 +114,7 @@ export class AuthService {
       });
     });
 
-    await this.redis.del(sessionCacheKey(token));
+    await this.redis.del(sessionCacheKey(tokenHash));
   }
 
   async forgotPassword(email: string, requestId: string): Promise<void> {
@@ -132,7 +135,7 @@ export class AuthService {
       const txRepo = this.repo.withTx(tx);
       // Supersede any earlier unused tokens — only the newest link stays live.
       await txRepo.deleteUnusedPasswordResetTokens(account.id);
-      await txRepo.createPasswordResetToken(account.id, token, expiresAt, 'PASSWORD_RESET');
+      await txRepo.createPasswordResetToken(account.id, hashToken(token), expiresAt, 'PASSWORD_RESET');
       await this.audit.withTx(tx).record({
         tenantId: account.tenantId,
         actorId: account.id,
@@ -154,7 +157,7 @@ export class AuthService {
   }
 
   async resetPassword(token: string, newPassword: string, requestId: string): Promise<void> {
-    const record = await this.repo.findPasswordResetToken(token, 'PASSWORD_RESET');
+    const record = await this.repo.findPasswordResetToken(hashToken(token), 'PASSWORD_RESET');
 
     if (!record) {
       throw new UnauthorizedError('Invalid or expired reset token');
@@ -180,7 +183,7 @@ export class AuthService {
       sessionTokens = await txRepo.getUserSessionTokens(record.userId);
       await txRepo.updateUserPassword(record.userId, passwordHash);
       await txRepo.setMustChangePassword(record.userId, false);
-      await txRepo.markTokenUsed(token);
+      await txRepo.markTokenUsed(hashToken(token));
       await txRepo.deleteUserSessions(record.userId);
       await this.audit.withTx(tx).record({
         tenantId: record.tenantId,
@@ -202,7 +205,7 @@ export class AuthService {
     newPassword: string,
     requestId: string,
   ) {
-    const record = await this.repo.findPasswordResetToken(token, 'FIRST_LOGIN_SETUP');
+    const record = await this.repo.findPasswordResetToken(hashToken(token), 'FIRST_LOGIN_SETUP');
 
     if (!record) {
       throw new UnauthorizedError('Invalid or expired setup token');
@@ -221,15 +224,19 @@ export class AuthService {
 
     const passwordHash = await argon2.hash(newPassword);
     const sessionToken = crypto.randomBytes(32).toString('hex');
+    const sessionTokenHash = hashToken(sessionToken);
     const sessionExpiresAt = new Date(Date.now() + config.sessionTtlSeconds * 1_000);
+
+    let priorSessionHashes: string[] = [];
 
     await this.db.transaction().execute(async (tx) => {
       const txRepo = this.repo.withTx(tx);
+      priorSessionHashes = await txRepo.getUserSessionTokens(record.userId);
       await txRepo.updateUserPassword(record.userId, passwordHash);
       await txRepo.setMustChangePassword(record.userId, false);
-      await txRepo.markTokenUsed(token);
+      await txRepo.markTokenUsed(hashToken(token));
       await txRepo.deleteUserSessions(record.userId);
-      await txRepo.createSession(record.userId, sessionToken, sessionExpiresAt);
+      await txRepo.createSession(record.userId, sessionTokenHash, sessionExpiresAt);
       await this.audit.withTx(tx).record({
         tenantId: record.tenantId,
         actorId: record.userId,
@@ -240,8 +247,9 @@ export class AuthService {
       });
     });
 
-    // No Redis write — the authenticate middleware has a DB fallback and
-    // self-populates the cache on the first use of this session token.
+    if (priorSessionHashes.length > 0) {
+      await Promise.all(priorSessionHashes.map((h) => this.redis.del(sessionCacheKey(h))));
+    }
 
     return {
       token: sessionToken,

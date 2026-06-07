@@ -1,6 +1,7 @@
 import type { FastifyRequest } from 'fastify';
 import { UnauthorizedError } from '../errors/base.js';
 import { sessionCacheKey, type CachedSession } from './session.js';
+import { hashToken } from './token-hash.js';
 import type { AppDb } from '../db/index.js';
 import type { Redis } from '../cache/redis.js';
 
@@ -12,9 +13,10 @@ export function createAuthenticate(db: AppDb, redis: Redis) {
     }
 
     const token = authHeader.slice(7);
+    const tokenHash = hashToken(token);
 
     // Fast path: Redis cache hit
-    const cached = await redis.get(sessionCacheKey(token));
+    const cached = await redis.get(sessionCacheKey(tokenHash));
     if (cached !== null) {
       request.user = JSON.parse(cached) as CachedSession;
       return;
@@ -33,7 +35,7 @@ export function createAuthenticate(db: AppDb, redis: Redis) {
         'Tenant.isActive as tenantIsActive',
         'Session.expiresAt',
       ])
-      .where('Session.token', '=', token)
+      .where('Session.token', '=', tokenHash)
       .executeTakeFirst();
 
     if (!row || !row.isActive || !row.tenantIsActive) {
@@ -49,7 +51,7 @@ export function createAuthenticate(db: AppDb, redis: Redis) {
 
     const remainingTtl = Math.floor((expiresAt.getTime() - Date.now()) / 1_000);
     if (remainingTtl > 0) {
-      await redis.setex(sessionCacheKey(token), remainingTtl, JSON.stringify(session));
+      await redis.setex(sessionCacheKey(tokenHash), remainingTtl, JSON.stringify(session));
     }
 
     request.user = session;
