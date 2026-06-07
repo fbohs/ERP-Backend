@@ -1,4 +1,4 @@
-import { AppError } from '../../shared/errors/base.js';
+import { AppError } from '@/shared/errors/base.js';
 
 // Shared error classes pin `code` to a literal, so domain subclasses extend
 // AppError directly and set statusCode explicitly.

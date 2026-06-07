@@ -1,6 +1,6 @@
 import type { Transaction } from 'kysely';
-import type { AppDb } from '../db/index.js';
-import type { DB, Json } from '../../types/db.js';
+import type { AppDb } from '@/shared/db/index.js';
+import type { DB, Json } from '@/types/db.js';
 
 type Executor = AppDb | Transaction<DB>;
 

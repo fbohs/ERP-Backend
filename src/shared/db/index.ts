@@ -1,6 +1,6 @@
 import { Kysely, PostgresDialect } from 'kysely';
 import { Pool } from 'pg';
-import type { DB } from '../../types/db.js';
+import type { DB } from '@/types/db.js';
 
 export type AppDb = Kysely<DB>;
 

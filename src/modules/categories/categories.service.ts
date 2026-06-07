@@ -1,4 +1,4 @@
-import { logger } from '../../shared/logging/index.js';
+import { logger } from '@/shared/logging/index.js';
 import {
   CategoryNotFoundError,
   CategorySlugExistsError,
@@ -7,8 +7,8 @@ import {
 } from './categories.errors.js';
 import type { CreateCategoryBody, UpdateCategoryBody } from './categories.schemas.js';
 import type { CategoriesRepository } from './categories.repository.js';
-import type { AuditRepository } from '../../shared/audit/index.js';
-import type { AppDb } from '../../shared/db/index.js';
+import type { AuditRepository } from '@/shared/audit/index.js';
+import type { AppDb } from '@/shared/db/index.js';
 import type { CategoryView, CategoryActor } from './categories.types.js';
 
 const AUDIT = {

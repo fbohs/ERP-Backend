@@ -1,21 +1,20 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool } from 'pg';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import { readdirSync, statSync, readFileSync } from 'node:fs';
+import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createDb, type AppDb } from '../../shared/db/index.js';
-import { updatePlatformAdmin } from '../update-platform-admin.js';
+import { createDb, type AppDb } from '@/shared/db/index.js';
+import { updatePlatformAdmin } from '@/scripts/update-platform-admin.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MIGRATIONS_DIR = path.resolve(__dirname, '../../../prisma/migrations');
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const MIGRATIONS_DIR = resolve(__dirname, '../../../prisma/migrations');
 
 function loadMigrations(): string[] {
-  return fs
-    .readdirSync(MIGRATIONS_DIR)
-    .filter((entry) => fs.statSync(path.join(MIGRATIONS_DIR, entry)).isDirectory())
+  return readdirSync(MIGRATIONS_DIR)
+    .filter((entry) => statSync(join(MIGRATIONS_DIR, entry)).isDirectory())
     .sort()
-    .map((dir) => fs.readFileSync(path.join(MIGRATIONS_DIR, dir, 'migration.sql'), 'utf-8'));
+    .map((dir) => readFileSync(join(MIGRATIONS_DIR, dir, 'migration.sql'), 'utf-8'));
 }
 
 describe('updatePlatformAdmin', () => {

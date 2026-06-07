@@ -1,16 +1,16 @@
-import * as crypto from 'node:crypto';
-import * as argon2 from 'argon2';
-import { config } from '../../shared/config/index.js';
-import { logger } from '../../shared/logging/index.js';
+import { randomBytes } from 'node:crypto';
+import { hash as argon2Hash } from 'argon2';
+import { logger } from '@/shared/logging/index.js';
 import { UserNotFoundError, EmailAlreadyTakenError, CannotModifySelfError } from './users.errors.js';
 import {
   enqueueUserWelcomeEmail,
   type UserWelcomeEmailQueue,
 } from './jobs/send-user-welcome-email.js';
 import type { CreateUserBody } from './users.schemas.js';
+import type { Json } from '@/types/db.js';
 import type { UsersRepository } from './users.repository.js';
-import type { AuditRepository } from '../../shared/audit/index.js';
-import type { AppDb } from '../../shared/db/index.js';
+import type { AuditRepository } from '@/shared/audit/index.js';
+import type { AppDb } from '@/shared/db/index.js';
 
 const AUDIT_ACTION = {
   userCreated: 'user.created',
@@ -31,7 +31,7 @@ function generateTemporaryPassword(length = 20): string {
   let result = '';
   const limit = 256 - (256 % chars.length);
   while (result.length < length) {
-    const bytes = crypto.randomBytes(length * 2);
+    const bytes = randomBytes(length * 2);
     for (const byte of bytes) {
       if (byte < limit) {
         result += chars[byte % chars.length];
@@ -65,7 +65,7 @@ export class UsersService {
     const tenantName = tenant?.name ?? 'your organisation';
 
     const temporaryPassword = generateTemporaryPassword();
-    const passwordHash = await argon2.hash(temporaryPassword);
+    const passwordHash = await argon2Hash(temporaryPassword);
 
     let userPublicId = '';
 
@@ -78,7 +78,7 @@ export class UsersService {
           name: input.name,
           password: passwordHash,
           role: input.role,
-          specs: input.specs as import('../../types/db.js').Json | null,
+          specs: input.specs as Json | null,
           mustChangePassword: true,
         });
         userPublicId = user.publicId;

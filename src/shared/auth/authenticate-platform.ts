@@ -1,8 +1,8 @@
 import type { FastifyRequest } from 'fastify';
-import { UnauthorizedError } from '../errors/base.js';
+import { UnauthorizedError } from '@/shared/errors/base.js';
 import { hashToken } from './token-hash.js';
 import type { PlatformPrincipal } from './platform-session.js';
-import type { AppDb } from '../db/index.js';
+import type { AppDb } from '@/shared/db/index.js';
 
 export function createAuthenticatePlatform(db: AppDb) {
   return async function authenticatePlatform(request: FastifyRequest): Promise<void> {

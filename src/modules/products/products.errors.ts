@@ -1,4 +1,4 @@
-import { NotFoundError, ConflictError, ValidationError } from '../../shared/errors/base.js';
+import { NotFoundError, ConflictError, ValidationError } from '@/shared/errors/base.js';
 
 export class ProductNotFoundError extends NotFoundError {
   override readonly code = 'PRODUCT_NOT_FOUND';

@@ -8,13 +8,13 @@ import {
 } from './auth.schemas.js';
 import { AuthRepository } from './auth.repository.js';
 import { AuthService } from './auth.service.js';
-import { createAuthenticate } from '../../shared/auth/authenticate.js';
-import { AuditRepository } from '../../shared/audit/index.js';
-import { createIdempotency } from '../../shared/idempotency/index.js';
-import { ValidationError } from '../../shared/errors/base.js';
+import { createAuthenticate } from '@/shared/auth/authenticate.js';
+import { AuditRepository } from '@/shared/audit/index.js';
+import { createIdempotency } from '@/shared/idempotency/index.js';
+import { ValidationError } from '@/shared/errors/base.js';
 import { createPasswordResetEmailQueue } from './jobs/send-password-reset-email.js';
-import type { AppDb } from '../../shared/db/index.js';
-import type { Redis } from '../../shared/cache/redis.js';
+import type { AppDb } from '@/shared/db/index.js';
+import type { Redis } from '@/shared/cache/redis.js';
 
 interface AuthPluginOptions {
   db: AppDb;

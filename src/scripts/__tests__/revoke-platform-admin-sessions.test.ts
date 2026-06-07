@@ -1,22 +1,21 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool } from 'pg';
-import * as crypto from 'node:crypto';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { readdirSync, statSync, readFileSync } from 'node:fs';
+import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createDb, type AppDb } from '../../shared/db/index.js';
-import { revokePlatformAdminSessions } from '../revoke-platform-admin-sessions.js';
+import { createDb, type AppDb } from '@/shared/db/index.js';
+import { revokePlatformAdminSessions } from '@/scripts/revoke-platform-admin-sessions.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MIGRATIONS_DIR = path.resolve(__dirname, '../../../prisma/migrations');
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const MIGRATIONS_DIR = resolve(__dirname, '../../../prisma/migrations');
 
 function loadMigrations(): string[] {
-  return fs
-    .readdirSync(MIGRATIONS_DIR)
-    .filter((entry) => fs.statSync(path.join(MIGRATIONS_DIR, entry)).isDirectory())
+  return readdirSync(MIGRATIONS_DIR)
+    .filter((entry) => statSync(join(MIGRATIONS_DIR, entry)).isDirectory())
     .sort()
-    .map((dir) => fs.readFileSync(path.join(MIGRATIONS_DIR, dir, 'migration.sql'), 'utf-8'));
+    .map((dir) => readFileSync(join(MIGRATIONS_DIR, dir, 'migration.sql'), 'utf-8'));
 }
 
 describe('revokePlatformAdminSessions', () => {
@@ -48,7 +47,7 @@ describe('revokePlatformAdminSessions', () => {
     for (let i = 0; i < sessionCount; i++) {
       await pool.query(
         `INSERT INTO "PlatformAdminSession" ("tokenHash", "adminId", "expiresAt") VALUES ($1, $2, $3)`,
-        [crypto.randomBytes(32).toString('hex'), adminId, new Date(Date.now() + 60 * 60 * 1_000)],
+        [randomBytes(32).toString('hex'), adminId, new Date(Date.now() + 60 * 60 * 1_000)],
       );
     }
     return adminId;

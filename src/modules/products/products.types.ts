@@ -1,4 +1,4 @@
-import type { Productstatus, Producttype, Productverificationstatus } from '../../types/db.js';
+import type { Productstatus, Producttype, Productverificationstatus } from '@/types/db.js';
 
 export interface VariantView {
   id: string;

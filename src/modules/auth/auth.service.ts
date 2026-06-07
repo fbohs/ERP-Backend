@@ -1,17 +1,17 @@
-import * as crypto from 'node:crypto';
-import * as argon2 from 'argon2';
-import { config } from '../../shared/config/index.js';
-import { UnauthorizedError } from '../../shared/errors/base.js';
-import { sessionCacheKey, type CachedSession } from '../../shared/auth/session.js';
-import { hashToken } from '../../shared/auth/token-hash.js';
+import { randomBytes } from 'node:crypto';
+import { hash as argon2Hash, verify as argon2Verify } from 'argon2';
+import { config } from '@/shared/config/index.js';
+import { UnauthorizedError } from '@/shared/errors/base.js';
+import { sessionCacheKey, type CachedSession } from '@/shared/auth/session.js';
+import { hashToken } from '@/shared/auth/token-hash.js';
 import {
   enqueuePasswordResetEmail,
   type PasswordResetEmailQueue,
 } from './jobs/send-password-reset-email.js';
 import type { AuthRepository } from './auth.repository.js';
-import type { AuditRepository } from '../../shared/audit/index.js';
-import type { AppDb } from '../../shared/db/index.js';
-import type { Redis } from '../../shared/cache/redis.js';
+import type { AuditRepository } from '@/shared/audit/index.js';
+import type { AppDb } from '@/shared/db/index.js';
+import type { Redis } from '@/shared/cache/redis.js';
 
 const AUDIT_ACTION = {
   login: 'auth.login',
@@ -48,7 +48,7 @@ export class AuthService {
 
     // Verify unconditionally — against the decoy hash when the email has no
     // account — so the work done is identical whether or not the user exists.
-    const passwordMatches = await argon2.verify(
+    const passwordMatches = await argon2Verify(
       user?.password ?? DECOY_PASSWORD_HASH,
       password,
     );
@@ -61,7 +61,7 @@ export class AuthService {
     // return it instead of a session. No real access is granted until the user
     // picks their own password via POST /auth/setup-password.
     if (user.mustChangePassword) {
-      const setupToken = crypto.randomBytes(32).toString('hex');
+      const setupToken = randomBytes(32).toString('hex');
       const expiresAt = new Date(Date.now() + config.firstLoginSetupTtlSeconds * 1_000);
 
       await this.db.transaction().execute(async (tx) => {
@@ -73,7 +73,7 @@ export class AuthService {
       return { requiresPasswordChange: true as const, setupToken };
     }
 
-    const token = crypto.randomBytes(32).toString('hex');
+    const token = randomBytes(32).toString('hex');
     const tokenHash = hashToken(token);
     const expiresAt = new Date(Date.now() + config.sessionTtlSeconds * 1_000);
 
@@ -125,7 +125,7 @@ export class AuthService {
     const account =
       user !== undefined && user.isActive && user.tenantIsActive ? user : null;
 
-    const token = crypto.randomBytes(32).toString('hex');
+    const token = randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + config.passwordResetTtlSeconds * 1_000);
 
     await this.db.transaction().execute(async (tx) => {
@@ -174,7 +174,7 @@ export class AuthService {
       throw new UnauthorizedError('Invalid or expired reset token');
     }
 
-    const passwordHash = await argon2.hash(newPassword);
+    const passwordHash = await argon2Hash(newPassword);
 
     let sessionTokens: string[] = [];
 
@@ -222,8 +222,8 @@ export class AuthService {
       throw new UnauthorizedError('Invalid or expired setup token');
     }
 
-    const passwordHash = await argon2.hash(newPassword);
-    const sessionToken = crypto.randomBytes(32).toString('hex');
+    const passwordHash = await argon2Hash(newPassword);
+    const sessionToken = randomBytes(32).toString('hex');
     const sessionTokenHash = hashToken(sessionToken);
     const sessionExpiresAt = new Date(Date.now() + config.sessionTtlSeconds * 1_000);
 

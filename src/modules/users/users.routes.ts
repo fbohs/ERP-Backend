@@ -7,12 +7,12 @@ import {
 import { UsersRepository } from './users.repository.js';
 import { UsersService } from './users.service.js';
 import { createUserWelcomeEmailQueue } from './jobs/send-user-welcome-email.js';
-import { AuditRepository } from '../../shared/audit/index.js';
-import { createAuthenticate, authorize } from '../../shared/auth/index.js';
-import { createIdempotency } from '../../shared/idempotency/index.js';
-import { ValidationError } from '../../shared/errors/base.js';
-import type { AppDb } from '../../shared/db/index.js';
-import type { Redis } from '../../shared/cache/redis.js';
+import { AuditRepository } from '@/shared/audit/index.js';
+import { createAuthenticate, authorize } from '@/shared/auth/index.js';
+import { createIdempotency } from '@/shared/idempotency/index.js';
+import { ValidationError } from '@/shared/errors/base.js';
+import type { AppDb } from '@/shared/db/index.js';
+import type { Redis } from '@/shared/cache/redis.js';
 
 interface UsersPluginOptions {
   db: AppDb;

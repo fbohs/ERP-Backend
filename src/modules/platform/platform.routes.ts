@@ -11,12 +11,12 @@ import { PlatformRepository } from './platform.repository.js';
 import { PlatformService } from './platform.service.js';
 import { createPlatformLoginEmailQueue } from './jobs/send-login-link-email.js';
 import { createTenantWelcomeEmailQueue } from './jobs/send-tenant-welcome-email.js';
-import { AuditRepository, PlatformAuditRepository } from '../../shared/audit/index.js';
-import { createAuthenticatePlatform, createIpAllowlist } from '../../shared/auth/index.js';
-import { createIdempotency } from '../../shared/idempotency/index.js';
-import { ValidationError, NotFoundError } from '../../shared/errors/base.js';
-import type { AppDb } from '../../shared/db/index.js';
-import type { Redis } from '../../shared/cache/redis.js';
+import { AuditRepository, PlatformAuditRepository } from '@/shared/audit/index.js';
+import { createAuthenticatePlatform, createIpAllowlist } from '@/shared/auth/index.js';
+import { createIdempotency } from '@/shared/idempotency/index.js';
+import { ValidationError, NotFoundError } from '@/shared/errors/base.js';
+import type { AppDb } from '@/shared/db/index.js';
+import type { Redis } from '@/shared/cache/redis.js';
 
 interface PlatformPluginOptions {
   db: AppDb;

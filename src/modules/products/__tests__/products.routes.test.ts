@@ -11,24 +11,24 @@ vi.mock('../../../shared/storage/index.js', () => ({
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 import { Pool } from 'pg';
-import * as argon2 from 'argon2';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import { hash as argon2Hash } from 'argon2';
+import { readdirSync, statSync, readFileSync } from 'node:fs';
+import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
-import { buildApp } from '../../../app.js';
-import type { ProductView, ProductListView, PresignImageView } from '../products.types.js';
-import * as storage from '../../../shared/storage/index.js';
+import { buildApp } from '@/app.js';
+import type { ProductView, ProductListView, PresignImageView } from '@/modules/products/products.types.js';
+// eslint-disable-next-line no-restricted-syntax -- vi.mocked() requires a namespace object to spy on module exports
+import * as storage from '@/shared/storage/index.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MIGRATIONS_DIR = path.resolve(__dirname, '../../../../prisma/migrations');
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const MIGRATIONS_DIR = resolve(__dirname, '../../../../prisma/migrations');
 
 function loadMigrations(): string[] {
-  return fs
-    .readdirSync(MIGRATIONS_DIR)
-    .filter((entry) => fs.statSync(path.join(MIGRATIONS_DIR, entry)).isDirectory())
+  return readdirSync(MIGRATIONS_DIR)
+    .filter((entry) => statSync(join(MIGRATIONS_DIR, entry)).isDirectory())
     .sort()
-    .map((dir) => fs.readFileSync(path.join(MIGRATIONS_DIR, dir, 'migration.sql'), 'utf-8'));
+    .map((dir) => readFileSync(join(MIGRATIONS_DIR, dir, 'migration.sql'), 'utf-8'));
 }
 
 describe('products routes', () => {
@@ -59,7 +59,7 @@ describe('products routes', () => {
       `INSERT INTO "Tenant" (name, slug) VALUES ('Test Co', 'test-co') RETURNING id`,
     );
     const tenantId = tenantResult.rows[0]!.id;
-    const hash = await argon2.hash('password123');
+    const hash = await argon2Hash('password123');
 
     await Promise.all([
       pool.query(

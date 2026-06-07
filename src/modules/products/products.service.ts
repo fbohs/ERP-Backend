@@ -1,5 +1,5 @@
-import * as crypto from 'node:crypto';
-import { logger } from '../../shared/logging/index.js';
+import { randomUUID } from 'node:crypto';
+import { logger } from '@/shared/logging/index.js';
 import {
   ProductNotFoundError,
   ProductSkuExistsError,
@@ -14,20 +14,20 @@ import {
   ProductImageReorderMismatchError,
   ProductImageNotFoundError,
 } from './products.errors.js';
-import { ForbiddenError } from '../../shared/errors/base.js';
+import { ForbiddenError } from '@/shared/errors/base.js';
 import type { CreateProductBody, UpdateProductBody, UpdateVariantBody } from './products.schemas.js';
 import type { ProductsRepository } from './products.repository.js';
-import type { AuditRepository } from '../../shared/audit/index.js';
-import type { AppDb } from '../../shared/db/index.js';
+import type { AuditRepository } from '@/shared/audit/index.js';
+import type { AppDb } from '@/shared/db/index.js';
 import type { ProductView, ProductListView, VariantView, ProductActor, MediaEntry, PresignImageView } from './products.types.js';
-import type { Productstatus } from '../../types/db.js';
+import type { Productstatus } from '@/types/db.js';
 import {
   generatePresignedPutUrl,
   getObjectMeta,
   buildObjectUrl,
   isAllowedMimeType,
   MAX_IMAGE_SIZE_BYTES,
-} from '../../shared/storage/index.js';
+} from '@/shared/storage/index.js';
 
 const AUDIT = {
   created: 'product.created',
@@ -48,7 +48,6 @@ const MIME_TO_EXT: Record<string, string> = {
   'image/webp': 'webp',
 };
 
-type ProductRow = Awaited<ReturnType<ProductsRepository['findByPublicId']>>;
 type ProductListRow = Awaited<ReturnType<ProductsRepository['listByTenant']>>[number];
 type VariantRow = Awaited<ReturnType<ProductsRepository['listVariantsByProductId']>>[number];
 
@@ -420,7 +419,7 @@ export class ProductsService {
     if (!product) throw new ProductNotFoundError('Product not found');
 
     const ext = MIME_TO_EXT[mimeType];
-    const s3Key = `products/${productPublicId}/${crypto.randomUUID()}.${ext}`;
+    const s3Key = `products/${productPublicId}/${randomUUID()}.${ext}`;
 
     const { uploadUrl, expiresAt } = await generatePresignedPutUrl(s3Key, mimeType);
 

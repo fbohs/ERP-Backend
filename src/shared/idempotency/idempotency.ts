@@ -1,8 +1,8 @@
-import * as crypto from 'node:crypto';
+import { createHash } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import type { Redis } from '../cache/redis.js';
-import { ConflictError, ValidationError } from '../errors/base.js';
-import { logger } from '../logging/index.js';
+import type { Redis } from '@/shared/cache/redis.js';
+import { ConflictError, ValidationError } from '@/shared/errors/base.js';
+import { logger } from '@/shared/logging/index.js';
 
 const TTL_SECONDS = 24 * 60 * 60;
 const MAX_KEY_LENGTH = 255;
@@ -24,7 +24,7 @@ function storageKey(method: string, route: string, idempotencyKey: string): stri
 // other's response — they get a 409 instead.
 function fingerprint(request: FastifyRequest): string {
   const body = request.body === undefined ? '' : JSON.stringify(request.body);
-  return crypto.createHash('sha256').update(body).digest('hex');
+  return createHash('sha256').update(body).digest('hex');
 }
 
 export interface Idempotency {

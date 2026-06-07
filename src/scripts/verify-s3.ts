@@ -12,7 +12,7 @@ import {
   PutObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { config } from '../shared/config/index.js';
+import { config } from '@/shared/config/index.js';
 
 const TEST_KEY = `_verify/s3-check-${Date.now()}.txt`;
 const TEST_BODY = 'erp-s3-verify-ok';

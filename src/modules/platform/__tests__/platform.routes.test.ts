@@ -2,15 +2,15 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 import { Pool } from 'pg';
-import * as crypto from 'node:crypto';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import { randomBytes, createHash } from 'node:crypto';
+import { readdirSync, statSync, readFileSync } from 'node:fs';
+import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
-import { buildApp } from '../../../app.js';
+import { buildApp } from '@/app.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MIGRATIONS_DIR = path.resolve(__dirname, '../../../../prisma/migrations');
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const MIGRATIONS_DIR = resolve(__dirname, '../../../../prisma/migrations');
 
 // The allowlist used for the whole suite: loopback (what inject sends by
 // default) plus the private 10.0.0.0/8 block, to exercise multi-entry CIDR.
@@ -18,11 +18,10 @@ const ALLOWLIST = '127.0.0.0/8,10.0.0.0/8';
 const BLOCKED_IP = '203.0.113.5'; // TEST-NET-3, outside the allowlist
 
 function loadMigrations(): string[] {
-  return fs
-    .readdirSync(MIGRATIONS_DIR)
-    .filter((entry) => fs.statSync(path.join(MIGRATIONS_DIR, entry)).isDirectory())
+  return readdirSync(MIGRATIONS_DIR)
+    .filter((entry) => statSync(join(MIGRATIONS_DIR, entry)).isDirectory())
     .sort()
-    .map((dir) => fs.readFileSync(path.join(MIGRATIONS_DIR, dir, 'migration.sql'), 'utf-8'));
+    .map((dir) => readFileSync(join(MIGRATIONS_DIR, dir, 'migration.sql'), 'utf-8'));
 }
 
 const ADMIN_EMAIL = 'ops@platform.test';
@@ -30,7 +29,7 @@ const ADMIN_EMAIL = 'ops@platform.test';
 // Mirrors shared/auth/token-hash.ts — tokens are stored as their SHA-256 hash,
 // so tests insert the hash and submit the raw token.
 function sha256hex(value: string): string {
-  return crypto.createHash('sha256').update(value).digest('hex');
+  return createHash('sha256').update(value).digest('hex');
 }
 
 describe('platform routes', () => {
@@ -76,7 +75,7 @@ describe('platform routes', () => {
   // Issues a fresh login token row (hash stored, raw submitted) and exchanges it
   // for a live session token.
   async function freshSessionToken(): Promise<string> {
-    const raw = crypto.randomBytes(32).toString('hex');
+    const raw = randomBytes(32).toString('hex');
     await pool.query(
       `INSERT INTO "PlatformAdminLoginToken" ("tokenHash", "adminId", "expiresAt") VALUES ($1, $2, $3)`,
       [sha256hex(raw), adminId, new Date(Date.now() + 30 * 60 * 1_000)],
@@ -190,7 +189,7 @@ describe('platform routes', () => {
 
   describe('POST /platform/auth/verify', () => {
     it('returns 200 with a working session token on a valid login token', async () => {
-      const raw = crypto.randomBytes(32).toString('hex');
+      const raw = randomBytes(32).toString('hex');
       await pool.query(
         `INSERT INTO "PlatformAdminLoginToken" ("tokenHash", "adminId", "expiresAt") VALUES ($1, $2, $3)`,
         [sha256hex(raw), adminId, new Date(Date.now() + 30 * 60 * 1_000)],
@@ -230,7 +229,7 @@ describe('platform routes', () => {
     });
 
     it('records a platform.login audit row with the source IP', async () => {
-      const raw = crypto.randomBytes(32).toString('hex');
+      const raw = randomBytes(32).toString('hex');
       await pool.query(
         `INSERT INTO "PlatformAdminLoginToken" ("tokenHash", "adminId", "expiresAt") VALUES ($1, $2, $3)`,
         [sha256hex(raw), adminId, new Date(Date.now() + 30 * 60 * 1_000)],
@@ -252,7 +251,7 @@ describe('platform routes', () => {
     });
 
     it('returns 401 on an expired token', async () => {
-      const raw = crypto.randomBytes(32).toString('hex');
+      const raw = randomBytes(32).toString('hex');
       await pool.query(
         `INSERT INTO "PlatformAdminLoginToken" ("tokenHash", "adminId", "expiresAt") VALUES ($1, $2, $3)`,
         [sha256hex(raw), adminId, new Date(Date.now() - 1_000)],
@@ -266,7 +265,7 @@ describe('platform routes', () => {
     });
 
     it('is single-use: a second verify of the same token is rejected (double-spend)', async () => {
-      const raw = crypto.randomBytes(32).toString('hex');
+      const raw = randomBytes(32).toString('hex');
       await pool.query(
         `INSERT INTO "PlatformAdminLoginToken" ("tokenHash", "adminId", "expiresAt") VALUES ($1, $2, $3)`,
         [sha256hex(raw), adminId, new Date(Date.now() + 30 * 60 * 1_000)],
@@ -419,7 +418,7 @@ describe('platform routes', () => {
         url: '/platform/tenants',
         headers: {
           authorization: `Bearer ${sessionToken}`,
-          'idempotency-key': crypto.randomBytes(16).toString('hex'),
+          'idempotency-key': randomBytes(16).toString('hex'),
         },
         payload: {
           tenant: { name: 'Globex Inc', slug: 'globex' },
@@ -466,7 +465,7 @@ describe('platform routes', () => {
         url: '/platform/tenants',
         headers: {
           authorization: `Bearer ${sessionToken}`,
-          'idempotency-key': crypto.randomBytes(16).toString('hex'),
+          'idempotency-key': randomBytes(16).toString('hex'),
         },
         payload: {
           tenant: { name: 'Globex Again', slug: 'globex' },
@@ -490,7 +489,7 @@ describe('platform routes', () => {
 
     it('replays the same response under a repeated Idempotency-Key without a second tenant', async () => {
       const sessionToken = await freshSessionToken();
-      const idemKey = crypto.randomBytes(16).toString('hex');
+      const idemKey = randomBytes(16).toString('hex');
       const payload = {
         tenant: { name: 'Initech', slug: 'initech' },
         admin: { email: 'admin@initech.test', name: 'Initech Admin' },
@@ -533,7 +532,7 @@ describe('platform routes', () => {
         url: `/platform/tenants/${publicId}`,
         headers: {
           authorization: `Bearer ${sessionToken}`,
-          'idempotency-key': crypto.randomBytes(16).toString('hex'),
+          'idempotency-key': randomBytes(16).toString('hex'),
         },
         payload: { isActive: false },
       });

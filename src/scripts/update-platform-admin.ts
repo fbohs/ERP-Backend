@@ -1,5 +1,5 @@
-import { PlatformAuditRepository } from '../shared/audit/index.js';
-import type { AppDb } from '../shared/db/index.js';
+import { PlatformAuditRepository } from '@/shared/audit/index.js';
+import type { AppDb } from '@/shared/db/index.js';
 
 export interface UpdatePlatformAdminInput {
   email: string;

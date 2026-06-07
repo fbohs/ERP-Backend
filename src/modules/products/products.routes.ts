@@ -1,10 +1,10 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { ProductsRepository } from './products.repository.js';
 import { ProductsService } from './products.service.js';
-import { AuditRepository } from '../../shared/audit/index.js';
-import { createAuthenticate, authorize } from '../../shared/auth/index.js';
-import { createIdempotency } from '../../shared/idempotency/index.js';
-import { ValidationError } from '../../shared/errors/base.js';
+import { AuditRepository } from '@/shared/audit/index.js';
+import { createAuthenticate, authorize } from '@/shared/auth/index.js';
+import { createIdempotency } from '@/shared/idempotency/index.js';
+import { ValidationError } from '@/shared/errors/base.js';
 import {
   CreateProductBodySchema,
   UpdateProductBodySchema,
@@ -13,8 +13,8 @@ import {
   VariantParamsSchema,
   ListProductsQuerySchema,
 } from './products.schemas.js';
-import type { AppDb } from '../../shared/db/index.js';
-import type { Redis } from '../../shared/cache/redis.js';
+import type { AppDb } from '@/shared/db/index.js';
+import type { Redis } from '@/shared/cache/redis.js';
 
 interface ProductsPluginOptions {
   db: AppDb;

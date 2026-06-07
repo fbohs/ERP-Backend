@@ -1,4 +1,4 @@
-import type { Userrole } from '../../types/db.js';
+import type { Userrole } from '@/types/db.js';
 
 export interface CachedSession {
   userId: string;

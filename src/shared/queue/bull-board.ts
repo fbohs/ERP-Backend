@@ -3,10 +3,10 @@ import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { FastifyAdapter } from '@bull-board/fastify';
 import { Queue } from 'bullmq';
 import type { FastifyPluginAsync } from 'fastify';
-import { PASSWORD_RESET_EMAIL_QUEUE } from '../../modules/auth/jobs/send-password-reset-email.js';
-import { PLATFORM_LOGIN_EMAIL_QUEUE } from '../../modules/platform/jobs/send-login-link-email.js';
-import { createIpAllowlist } from '../auth/index.js';
-import { NotFoundError } from '../errors/base.js';
+import { PASSWORD_RESET_EMAIL_QUEUE } from '@/modules/auth/jobs/send-password-reset-email.js';
+import { PLATFORM_LOGIN_EMAIL_QUEUE } from '@/modules/platform/jobs/send-login-link-email.js';
+import { createIpAllowlist } from '@/shared/auth/index.js';
+import { NotFoundError } from '@/shared/errors/base.js';
 import { connectionFor } from './connection.js';
 
 interface BullBoardPluginOptions {

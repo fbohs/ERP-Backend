@@ -1,4 +1,4 @@
-import { AppError } from '../../shared/errors/base.js';
+import { AppError } from '@/shared/errors/base.js';
 
 // The shared ConflictError/NotFoundError pin `code` to a literal, so domain
 // subclasses extend AppError directly. The global handler maps any AppError by

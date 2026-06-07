@@ -1,9 +1,9 @@
 import type { FastifyRequest } from 'fastify';
-import { UnauthorizedError } from '../errors/base.js';
+import { UnauthorizedError } from '@/shared/errors/base.js';
 import { sessionCacheKey, type CachedSession } from './session.js';
 import { hashToken } from './token-hash.js';
-import type { AppDb } from '../db/index.js';
-import type { Redis } from '../cache/redis.js';
+import type { AppDb } from '@/shared/db/index.js';
+import type { Redis } from '@/shared/cache/redis.js';
 
 export function createAuthenticate(db: AppDb, redis: Redis) {
   return async function authenticate(request: FastifyRequest): Promise<void> {

@@ -1,5 +1,5 @@
 import type { FastifyRequest } from 'fastify';
-import { ForbiddenError } from '../errors/base.js';
+import { ForbiddenError } from '@/shared/errors/base.js';
 import { ROLE_PERMISSIONS, type Permission } from './permissions.js';
 
 export function authorize(...required: Permission[]) {

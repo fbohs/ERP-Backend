@@ -1,4 +1,4 @@
-import { NotFoundError, ConflictError } from '../../shared/errors/base.js';
+import { NotFoundError, ConflictError } from '@/shared/errors/base.js';
 
 export class CategoryNotFoundError extends NotFoundError {
   override readonly code = 'CATEGORY_NOT_FOUND';

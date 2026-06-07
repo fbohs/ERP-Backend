@@ -1,4 +1,4 @@
-import type { Userrole } from '../../types/db.js';
+import type { Userrole } from '@/types/db.js';
 
 // Single source of truth. `Permission` is derived from this array, so adding a
 // permission is one line — the union updates with it. Same pattern as

@@ -2,23 +2,22 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 import { Pool } from 'pg';
-import * as argon2 from 'argon2';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import * as crypto from 'node:crypto';
+import { hash as argon2Hash } from 'argon2';
+import { readdirSync, statSync, readFileSync } from 'node:fs';
+import { dirname, resolve, join } from 'node:path';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
-import { buildApp } from '../../../app.js';
+import { buildApp } from '@/app.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MIGRATIONS_DIR = path.resolve(__dirname, '../../../../prisma/migrations');
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const MIGRATIONS_DIR = resolve(__dirname, '../../../../prisma/migrations');
 
 function loadMigrations(): string[] {
-  return fs
-    .readdirSync(MIGRATIONS_DIR)
-    .filter((entry) => fs.statSync(path.join(MIGRATIONS_DIR, entry)).isDirectory())
+  return readdirSync(MIGRATIONS_DIR)
+    .filter((entry) => statSync(join(MIGRATIONS_DIR, entry)).isDirectory())
     .sort()
-    .map((dir) => fs.readFileSync(path.join(MIGRATIONS_DIR, dir, 'migration.sql'), 'utf-8'));
+    .map((dir) => readFileSync(join(MIGRATIONS_DIR, dir, 'migration.sql'), 'utf-8'));
 }
 
 describe('categories routes', () => {
@@ -45,7 +44,7 @@ describe('categories routes', () => {
     );
     const tenantId = tenantResult.rows[0]!.id;
 
-    const passwordHash = await argon2.hash('password123');
+    const passwordHash = await argon2Hash('password123');
 
     await pool.query(
       `INSERT INTO "User" ("tenantId", email, name, password, role)
@@ -251,7 +250,7 @@ describe('categories routes', () => {
     it('returns 404 for unknown id', async () => {
       const res = await app.inject({
         method: 'GET',
-        url: `/categories/${crypto.randomUUID()}`,
+        url: `/categories/${randomUUID()}`,
         headers: { authorization: `Bearer ${adminToken}` },
       });
       expect(res.statusCode).toBe(404);
@@ -333,7 +332,7 @@ describe('categories routes', () => {
     it('returns 404 for unknown parent id', async () => {
       const res = await app.inject({
         method: 'GET',
-        url: `/categories/${crypto.randomUUID()}/children`,
+        url: `/categories/${randomUUID()}/children`,
         headers: { authorization: `Bearer ${adminToken}` },
       });
       expect(res.statusCode).toBe(404);
@@ -474,7 +473,7 @@ describe('categories routes', () => {
     it('returns 404 for unknown id', async () => {
       const res = await app.inject({
         method: 'DELETE',
-        url: `/categories/${crypto.randomUUID()}`,
+        url: `/categories/${randomUUID()}`,
         headers: { authorization: `Bearer ${adminToken}` },
       });
       expect(res.statusCode).toBe(404);
@@ -503,7 +502,7 @@ describe('categories routes', () => {
 
   describe('Idempotency-Key on POST /categories', () => {
     it('replays the stored response without creating a duplicate', async () => {
-      const key = crypto.randomBytes(16).toString('hex');
+      const key = randomBytes(16).toString('hex');
       const payload = { name: `Idem-${key}`, slug: `idem-${key}` };
 
       const first = await app.inject({

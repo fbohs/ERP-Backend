@@ -1,9 +1,9 @@
-import * as crypto from 'node:crypto';
-import * as argon2 from 'argon2';
-import { config } from '../../shared/config/index.js';
-import { UnauthorizedError } from '../../shared/errors/base.js';
-import { logger } from '../../shared/logging/index.js';
-import { hashToken } from '../../shared/auth/index.js';
+import { randomBytes } from 'node:crypto';
+import { hash as argon2Hash } from 'argon2';
+import { config } from '@/shared/config/index.js';
+import { UnauthorizedError } from '@/shared/errors/base.js';
+import { logger } from '@/shared/logging/index.js';
+import { hashToken } from '@/shared/auth/index.js';
 import { TenantSlugTakenError, TenantNotFoundError } from './platform.errors.js';
 import {
   enqueuePlatformLoginEmail,
@@ -15,8 +15,8 @@ import {
 } from './jobs/send-tenant-welcome-email.js';
 import type { CreateTenantBody } from './platform.schemas.js';
 import type { PlatformRepository } from './platform.repository.js';
-import type { AuditRepository, PlatformAuditRepository } from '../../shared/audit/index.js';
-import type { AppDb } from '../../shared/db/index.js';
+import type { AuditRepository, PlatformAuditRepository } from '@/shared/audit/index.js';
+import type { AppDb } from '@/shared/db/index.js';
 
 // Tenant-scoped platform actions — recorded in the tenant AuditLog (they carry
 // the target tenant's id).
@@ -66,7 +66,7 @@ function generateTemporaryPassword(length = 20): string {
   // chars, so rejection is rare.
   const limit = 256 - (256 % chars.length);
   while (result.length < length) {
-    const bytes = crypto.randomBytes(length * 2);
+    const bytes = randomBytes(length * 2);
     for (const byte of bytes) {
       if (byte < limit) {
         result += chars[byte % chars.length];
@@ -99,7 +99,7 @@ export class PlatformService {
     // UNCONDITIONALLY, so a known and an unknown email cost the same. Only the
     // body of the transaction differs. (Mirrors auth.forgotPassword.) Storing
     // only the hash means a DB leak yields no usable link.
-    const rawToken = crypto.randomBytes(32).toString('hex');
+    const rawToken = randomBytes(32).toString('hex');
     const tokenHash = hashToken(rawToken);
     const expiresAt = new Date(Date.now() + config.platformLoginTokenTtlSeconds * 1_000);
 
@@ -140,7 +140,7 @@ export class PlatformService {
 
   async verifyLoginLink(rawToken: string, ipAddress: string | null): Promise<{ token: string }> {
     const tokenHash = hashToken(rawToken);
-    const sessionToken = crypto.randomBytes(32).toString('hex');
+    const sessionToken = randomBytes(32).toString('hex');
     const sessionTokenHash = hashToken(sessionToken);
     const sessionExpiresAt = new Date(Date.now() + config.platformSessionTtlSeconds * 1_000);
 
@@ -221,7 +221,7 @@ export class PlatformService {
     }
 
     const temporaryPassword = generateTemporaryPassword();
-    const passwordHash = await argon2.hash(temporaryPassword);
+    const passwordHash = await argon2Hash(temporaryPassword);
 
     let tenantPublicId = '';
     try {

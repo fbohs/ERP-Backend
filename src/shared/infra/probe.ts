@@ -1,7 +1,7 @@
 import { Client } from 'pg';
 import { Redis } from 'ioredis';
-import { config } from '../config/index.js';
-import { logger } from '../logging/index.js';
+import { config } from '@/shared/config/index.js';
+import { logger } from '@/shared/logging/index.js';
 
 const PROBE_TIMEOUT_MS = 5_000;
 

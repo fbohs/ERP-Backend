@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
-import { createDb } from '../shared/db/index.js';
-import { config } from '../shared/config/index.js';
-import { logger } from '../shared/logging/index.js';
+import { createDb } from '@/shared/db/index.js';
+import { config } from '@/shared/config/index.js';
+import { logger } from '@/shared/logging/index.js';
 import { createPlatformAdmin } from './create-platform-admin.js';
 
 // Entry point for `npm run platform:create-admin -- --email <e> --name <n>`.

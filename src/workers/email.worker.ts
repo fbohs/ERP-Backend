@@ -1,24 +1,24 @@
 import { Worker } from 'bullmq';
-import { createResend } from '../shared/email/resend.js';
-import { passwordResetEmail, platformLoginEmail, tenantWelcomeEmail, userWelcomeEmail } from '../shared/email/templates.js';
+import { createResend } from '@/shared/email/resend.js';
+import { passwordResetEmail, platformLoginEmail, tenantWelcomeEmail, userWelcomeEmail } from '@/shared/email/templates.js';
 import {
   PASSWORD_RESET_EMAIL_QUEUE,
   type PasswordResetEmailPayload,
-} from '../modules/auth/jobs/send-password-reset-email.js';
+} from '@/modules/auth/jobs/send-password-reset-email.js';
 import {
   PLATFORM_LOGIN_EMAIL_QUEUE,
   type PlatformLoginEmailPayload,
-} from '../modules/platform/jobs/send-login-link-email.js';
+} from '@/modules/platform/jobs/send-login-link-email.js';
 import {
   TENANT_WELCOME_EMAIL_QUEUE,
   type TenantWelcomeEmailPayload,
-} from '../modules/platform/jobs/send-tenant-welcome-email.js';
+} from '@/modules/platform/jobs/send-tenant-welcome-email.js';
 import {
   USER_WELCOME_EMAIL_QUEUE,
   type UserWelcomeEmailPayload,
-} from '../modules/users/jobs/send-user-welcome-email.js';
-import type { Resend } from '../shared/email/resend.js';
-import { connectionFor } from '../shared/queue/connection.js';
+} from '@/modules/users/jobs/send-user-welcome-email.js';
+import type { Resend } from '@/shared/email/resend.js';
+import { connectionFor } from '@/shared/queue/connection.js';
 
 interface EmailWorkerOptions {
   emailFrom: string;

@@ -1,6 +1,6 @@
 import { S3Client, HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { config } from '../config/index.js';
+import { config } from '@/shared/config/index.js';
 
 export const PRESIGN_TTL_SECONDS = 24 * 60 * 60;
 export const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB — enforced at confirm via HeadObject
