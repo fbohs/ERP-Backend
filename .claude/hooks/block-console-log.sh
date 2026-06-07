@@ -7,9 +7,10 @@ INPUT=$(cat)
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.path // empty')
 NEW_CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // .tool_input.new_string // empty')
 
-# Allow in test files
+# Allow in test files and non-source files (docs, config, scripts)
 case "$FILE_PATH" in
   *.test.ts|*.spec.ts|*__tests__*) exit 0 ;;
+  *.md|*.json|*.yaml|*.yml|*.sh) exit 0 ;;
 esac
 
 if echo "$NEW_CONTENT" | grep -qE "console\.(log|info|warn|error|debug)\("; then

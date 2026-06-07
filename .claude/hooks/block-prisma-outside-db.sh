@@ -10,9 +10,10 @@ INPUT=$(cat)
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.path // empty')
 NEW_CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // .tool_input.new_string // empty')
 
-# Allow edits inside src/shared/db/
+# Allow edits inside src/shared/db/ and non-source files
 case "$FILE_PATH" in
   *src/shared/db/*) exit 0 ;;
+  *.md|*.json|*.yaml|*.yml|*.sh) exit 0 ;;
 esac
 
 # Detect PrismaClient / @prisma/client imports
